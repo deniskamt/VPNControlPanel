@@ -47,9 +47,26 @@ async def _prepare_database() -> None:
             )
 
 
+def _check_secrets() -> None:
+    """Слабый ключ подписи — тихая, но серьёзная дыра: им подписываются
+    сессии панели, а при пустом SUBSCRIPTION_SECRET ещё и токены подписок."""
+    if settings.SECRET_KEY == "change-me-please":
+        logger.error(
+            "SECRET_KEY не задан и используется значение по умолчанию. "
+            "Сгенерируйте его: python -c \"import secrets; "
+            "print(secrets.token_urlsafe(48))\""
+        )
+    elif len(settings.SECRET_KEY) < 32:
+        logger.warning(
+            f"SECRET_KEY короткий ({len(settings.SECRET_KEY)} символов), "
+            "рекомендуется не меньше 32"
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     setup_logging()
+    _check_secrets()
     await _prepare_database()
     tasks = start_workers()
     logger.info(

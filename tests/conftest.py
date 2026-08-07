@@ -8,7 +8,8 @@
 
 import os
 
-os.environ.setdefault("SECRET_KEY", "test-secret-key")
+# Длина не случайна: PyJWT предупреждает о HMAC-ключах короче 32 байт.
+os.environ.setdefault("SECRET_KEY", "test-secret-key-long-enough-for-hmac-sha256")
 os.environ.setdefault("SUBSCRIPTION_SECRET", "e2e-subscription-secret")
 os.environ.setdefault("SUBSCRIPTION_BASE_URL", "https://vpn.example.com")
 os.environ.setdefault("SUBSCRIPTION_PATH", "c")

@@ -437,6 +437,31 @@ bash scripts/install_panel.sh
 systemctl disable --now vpn-agent && rm -rf /opt/vpn-agent
 ```
 
+### Если что-то не встало
+
+**`Failed building wheel for asyncpg / greenlet / pydantic-core`,
+`fatal error: Killed signal terminated program cc1`.**
+Так выглядит попытка pip собрать пакеты из исходников: готовых сборок под
+ваш Python ещё нет, а на маленьком сервере компиляция вдобавок падает по
+памяти. Обновите код — версии зависимостей заданы диапазонами и ставятся
+готовыми колёсами на Python 3.11 и новее:
+
+```bash
+cd /opt/vpn-panel
+git pull
+rm -rf .venv
+bash scripts/install_panel.sh
+```
+
+**`pg_lsclusters: not found` при установке postgresql.** Безобидное
+предупреждение debconf на минимальных образах Ubuntu — установка идёт дальше.
+
+**Панель не стартует.** Причина почти всегда в первых строках лога:
+
+```bash
+journalctl -u vpn-panel -n 30 --no-pager
+```
+
 **Обновление кода вручную:**
 
 ```bash

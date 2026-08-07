@@ -1,4 +1,4 @@
 # Драйверы, нужные только скрипту переноса из Marzban.
 # Ставятся поверх requirements.txt:  pip install -r requirements-migrate.txt
-psycopg2-binary==2.9.10   # синхронное подключение к базе панели
-PyMySQL==1.1.1            # если Marzban работал на MySQL/MariaDB
+psycopg2-binary>=2.9.10,<3   # синхронное подключение к базе панели
+PyMySQL>=1.1.1,<2            # если Marzban работал на MySQL/MariaDB

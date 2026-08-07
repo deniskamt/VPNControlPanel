@@ -2,29 +2,39 @@
 
 Хеши паролей — bcrypt, тот же формат, что в Marzban, поэтому админов можно
 перенести миграцией и войти со старым паролем.
+
+Библиотека bcrypt используется напрямую: passlib тянет стандартный модуль
+crypt, которого нет начиная с Python 3.13.
 """
 
 from datetime import datetime, timedelta
 from typing import Optional
 
+import bcrypt
 import jwt
-from passlib.context import CryptContext
 
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 ALGORITHM = "HS256"
+
+# bcrypt учитывает только первые 72 байта пароля, а в 5.x на более длинных
+# бросает ошибку (passlib раньше обрезал молча). Обрезаем сами, иначе
+# длинный пароль ронял бы и создание админа, и вход.
+_MAX_PASSWORD_BYTES = 72
+
+
+def _encode(password: str) -> bytes:
+    return password.encode("utf-8")[:_MAX_PASSWORD_BYTES]
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(_encode(password), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str, hashed: str) -> bool:
     try:
-        return pwd_context.verify(password, hashed)
-    except ValueError:
+        return bcrypt.checkpw(_encode(password), hashed.encode("utf-8"))
+    except (ValueError, TypeError):
         # Чужой/битый формат хеша — не роняем логин, просто отказываем.
         return False
 

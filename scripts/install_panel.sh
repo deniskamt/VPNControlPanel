@@ -184,11 +184,26 @@ fi
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(12))')}"
 
 echo "==> Создаём окружение Python"
+echo "  Python: $(python3 --version 2>&1)"
+# Прошлая попытка установки могла оставить недоделанное окружение —
+# на нём pip ведёт себя непредсказуемо, проще пересоздать.
+if [[ -d "$INSTALL_DIR/.venv" && ! -x "$INSTALL_DIR/.venv/bin/pip" ]]; then
+  echo "  прежнее окружение повреждено — создаём заново"
+  rm -rf "$INSTALL_DIR/.venv"
+fi
 if [[ ! -d "$INSTALL_DIR/.venv" ]]; then
   python3 -m venv "$INSTALL_DIR/.venv"
 fi
 "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip
-"$INSTALL_DIR/.venv/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt"
+if ! "$INSTALL_DIR/.venv/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt"; then
+  echo >&2
+  echo "Не удалось поставить зависимости." >&2
+  echo "Если pip пытался собирать asyncpg, greenlet или pydantic-core из" >&2
+  echo "исходников — обновите код панели (git pull) и повторите: в свежей" >&2
+  echo "версии версии пакетов подобраны так, чтобы ставиться готовыми" >&2
+  echo "колёсами на любой Python начиная с 3.11." >&2
+  exit 1
+fi
 
 echo "==> Пишем .env"
 if [[ -f "$ENV_FILE" ]]; then
