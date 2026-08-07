@@ -256,11 +256,16 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 EOF
 
-  systemctl daemon-reload
-  systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
-  systemctl restart "$SERVICE_NAME"
-  sleep 3
-  systemctl --no-pager --lines=15 status "$SERVICE_NAME" || true
+  if systemctl daemon-reload >/dev/null 2>&1; then
+    systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+    systemctl restart "$SERVICE_NAME"
+    sleep 3
+    systemctl --no-pager --lines=15 status "$SERVICE_NAME" || true
+  else
+    # Систем без systemd (контейнеры, WSL) — юнит записан, запускать нечем.
+    echo "  systemd недоступен: запустите панель вручную"
+    echo "  ${INSTALL_DIR}/.venv/bin/uvicorn app.main:app --host ${BIND_HOST} --port ${APP_PORT}"
+  fi
 fi
 
 if [[ "$ADMINS_EXIST" == "1" ]]; then

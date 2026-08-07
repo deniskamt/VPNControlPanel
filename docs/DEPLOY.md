@@ -373,14 +373,24 @@ journalctl -u vpn-agent -f          # логи агента (на ноде)
 
 Переустанавливать её ради изменений не нужно. Смотря что требуется:
 
+Все команды ниже выполняются в каталоге, куда панель установлена. Скрипт
+ставит её туда, откуда его запустили, — `/opt/vpn-panel` в инструкции просто
+пример. Если забыли, куда именно:
+
+```bash
+systemctl cat vpn-panel | grep WorkingDirectory
+```
+
 | Задача | Что сделать |
 | --- | --- |
-| поменять адрес, домен, токен бота и прочие настройки | `nano /opt/vpn-panel/.env` → `systemctl restart vpn-panel` |
+| не помню, куда поставил | `systemctl cat vpn-panel \| grep WorkingDirectory` |
+| поменять адрес, домен, токен бота и прочие настройки | `nano .env` → `systemctl restart vpn-panel` |
 | обновить код панели | `git pull` → `pip install -r requirements.txt` → `systemctl restart vpn-panel` |
 | забыт пароль администратора | `.venv/bin/python scripts/admin.py set-password --username admin` |
 | завести второго администратора | `.venv/bin/python scripts/admin.py set-password --username operator` |
 | посмотреть, кто есть | `.venv/bin/python scripts/admin.py list` |
-| начать с чистого листа | `REINSTALL=1 bash scripts/install_panel.sh` (см. предупреждение ниже) |
+| перевыпустить ключи, оставив данные | `REINSTALL=1 bash scripts/install_panel.sh` (см. предупреждение ниже) |
+| снести панель полностью | `bash scripts/uninstall_panel.sh` |
 
 Скрипт установки можно запускать повторно — он увидит существующий `.env` и
 переведёт себя в режим обновления: сохранит `SECRET_KEY`, `SUBSCRIPTION_SECRET`,
@@ -393,6 +403,39 @@ journalctl -u vpn-agent -f          # логи агента (на ноде)
 задан явно, токены подписок подписываются именно им — значит, все выданные
 пользователям ссылки перестанут открываться. Данные в базе при этом
 сохраняются, но подписки придётся раздавать заново.
+
+### Снести и поставить заново
+
+Для пробной установки, которую не жалко, проще всего начать с нуля:
+
+```bash
+bash scripts/uninstall_panel.sh          # спросит про базу и исходники
+```
+
+Скрипт сам находит каталог установки по systemd-юниту, останавливает и
+удаляет сервис, сносит окружение и `.env`. Базу и исходники он трогает
+только с вашего согласия — по умолчанию оставляет.
+
+Снести вообще всё, не отвечая на вопросы:
+
+```bash
+DROP_DATABASE=1 PURGE=1 bash scripts/uninstall_panel.sh -y
+```
+
+Затем обычная установка:
+
+```bash
+git clone https://github.com/deniskamt/VPNControlPanel.git /opt/vpn-panel
+cd /opt/vpn-panel
+bash scripts/install_panel.sh
+```
+
+Агенты на нодах при этом остаются жить своей жизнью. Если сносите и их:
+
+```bash
+# на каждом VPN-сервере
+systemctl disable --now vpn-agent && rm -rf /opt/vpn-agent
+```
 
 **Обновление кода вручную:**
 
