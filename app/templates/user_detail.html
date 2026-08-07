@@ -40,16 +40,28 @@
 </div>
 
 <div class="panel">
-  <header>Ссылка подписки</header>
+  <header>Подписка</header>
   <div class="body">
-    <div class="copy-field">
-      <input type="text" class="mono" readonly id="sub-url" value="{{ subscription_url }}">
-      <button class="small" data-copy="#sub-url">Копировать</button>
+    <div class="qr-row">
+      {% if subscription_qr %}
+        <div class="qr">{{ subscription_qr | safe }}</div>
+      {% endif %}
+      <div class="qr-side">
+        <label>Ссылка для приложения</label>
+        <div class="copy-field">
+          <input type="text" class="mono" readonly id="sub-url" value="{{ subscription_url }}">
+          <button class="small" data-copy="#sub-url">Копировать</button>
+        </div>
+        <p class="muted" style="margin-top:10px">
+          В v2rayNG, NekoBox или Hiddify её добавляют как <b>подписку</b>, а не как
+          отдельный сервер: тогда список серверов обновляется сам.
+        </p>
+        <p class="muted">
+          Ссылка переживает продление и смену серверов — меняется только при отзыве.
+          QR-код можно просто отсканировать камерой приложения.
+        </p>
+      </div>
     </div>
-    <p class="muted" style="margin-top:10px">
-      Эта ссылка вставляется в приложение. Она переживает продление подписки и
-      смену сервера — меняется только при отзыве.
-    </p>
   </div>
 </div>
 
@@ -124,7 +136,9 @@
         <tr>
           <td>{{ proxy.protocol.value }}</td>
           <td class="mono">
-            {% for key, value in (proxy.settings or {}).items() %}
+            {# Пустые значения не показываем: пустой flow только сбивает с толку,
+               его подставляет само подключение. #}
+            {% for key, value in (proxy.settings or {}).items() if value %}
               {{ key }}={{ value }}{% if not loop.last %} · {% endif %}
             {% endfor %}
           </td>

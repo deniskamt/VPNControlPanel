@@ -17,6 +17,7 @@ from app.models.inbound import Inbound
 from app.models.user import User
 from app.services import users as user_service
 from app.services.audit import log_action
+from app.services.qr import qr_svg
 from app.services.worker import trigger_sync
 from app.web.templates import templates
 
@@ -126,6 +127,7 @@ async def user_detail(
         .scalars()
         .all()
     )
+    subscription_url = settings.subscription_url(user_service.subscription_token(user))
 
     return templates.TemplateResponse(
         request,
@@ -139,9 +141,9 @@ async def user_detail(
             "user_inbound_ids": {inbound.id for inbound in user.inbounds},
             "protocols": [item.value for item in ProxyType],
             "statuses": [item.value for item in UserStatus],
-            "subscription_url": settings.subscription_url(
-                user_service.subscription_token(user)
-            ),
+            "subscription_url": subscription_url,
+            # QR удобнее ссылки: подписка забирается телефоном сразу.
+            "subscription_qr": qr_svg(subscription_url, scale=5),
             "GB": GB,
         },
     )

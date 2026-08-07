@@ -14,6 +14,7 @@ from app.models.admin import Admin
 from app.models.enums import NetworkType, ProxyType, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
+from app.services import presets as preset_service
 from app.services.audit import log_action
 from app.services.worker import trigger_sync
 from app.web.templates import templates
@@ -71,6 +72,8 @@ async def list_inbounds(
             "protocols": [item.value for item in ProxyType],
             "networks": [item.value for item in NetworkType],
             "securities": [item.value for item in SecurityType],
+            "presets": preset_service.PRESETS,
+            "masking_domains": preset_service.MASKING_DOMAINS,
             "settings_json": {
                 inbound.id: json.dumps(
                     inbound.settings or {}, ensure_ascii=False, indent=2
@@ -79,6 +82,68 @@ async def list_inbounds(
             },
         },
     )
+
+
+@router.post("/quick")
+async def quick_create(
+    preset: str = Form(...),
+    port: int = Form(0),
+    masking_domain: str = Form(default=""),
+    sni: str = Form(default=""),
+    certificate_file: str = Form(default=""),
+    key_file: str = Form(default=""),
+    node_ids: List[int] = Form(default=[]),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Создать подключение по шаблону: без JSON и без похода на сервер за ключами."""
+    template = preset_service.PRESETS_BY_KEY.get(preset)
+    if template is None:
+        raise HTTPException(422, f"Неизвестный шаблон: {preset}")
+
+    existing = list(
+        (await session.execute(select(Inbound.tag))).scalars().all()
+    )
+    tag = preset_service.suggest_tag(template, existing)
+
+    inbound = Inbound(
+        tag=tag,
+        remark=template.title,
+        protocol=template.protocol,
+        port=port or template.default_port,
+        network=template.network,
+        security=template.security,
+        listen="0.0.0.0",
+        settings=preset_service.build_settings(
+            template,
+            masking_domain=masking_domain,
+            certificate_file=certificate_file,
+            key_file=key_file,
+            sni=sni,
+        ),
+    )
+
+    # По умолчанию поднимаем подключение на всех серверах: держать его
+    # включённым, но ни к одному серверу не привязанным, смысла нет.
+    if node_ids:
+        result = await session.execute(select(Node).where(Node.id.in_(node_ids)))
+    else:
+        result = await session.execute(select(Node).where(Node.is_enabled.is_(True)))
+    inbound.nodes = list(result.scalars().all())
+
+    session.add(inbound)
+    await log_action(
+        session,
+        action="inbound.create",
+        actor=admin.username,
+        target=tag,
+        target_type="inbound",
+        message=f"по шаблону «{template.title}»",
+    )
+    await session.commit()
+
+    trigger_sync()
+    return _redirect()
 
 
 @router.post("/create")

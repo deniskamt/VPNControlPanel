@@ -1,6 +1,6 @@
 """Управление серверами (нодами)."""
 
-import secrets
+import json
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
@@ -16,8 +16,10 @@ from app.models.enums import NodeStatus
 from app.models.inbound import Inbound
 from app.models.node import Node
 from app.services.audit import log_action
+from app.services.keys import generate_agent_token
 from app.services.node_client import NodeClient, NodeError
 from app.services.node_manager import load_users, poll_node, sync_node
+from app.services.xray_config import build_node_config, config_hash
 from app.web.templates import templates
 
 router = APIRouter(prefix="/nodes")
@@ -56,7 +58,7 @@ async def list_nodes(
             "page": "nodes",
             "nodes": nodes,
             "inbounds": inbounds,
-            "new_token": secrets.token_urlsafe(32),
+            "new_token": generate_agent_token(),
             "panel_url": settings.PANEL_URL,
             "NodeStatus": NodeStatus,
         },
@@ -91,9 +93,14 @@ async def create_node(
         usage_coefficient=usage_coefficient or 1.0,
         status=NodeStatus.connecting,
     )
+    # Без явного выбора выдаём серверу все включённые подключения: новый
+    # сервер почти всегда нужен «как остальные», а пустой список означал бы
+    # ноду, на которой нечему работать.
     if inbound_ids:
-        result = await session.execute(select(Inbound).where(Inbound.id.in_(inbound_ids)))
-        node.inbounds = list(result.scalars().all())
+        query = select(Inbound).where(Inbound.id.in_(inbound_ids))
+    else:
+        query = select(Inbound).where(Inbound.is_enabled.is_(True))
+    node.inbounds = list((await session.execute(query)).scalars().all())
 
     session.add(node)
     await log_action(
@@ -228,6 +235,40 @@ async def restart_node(
     )
     await poll_node(session, node)
     return _redirect()
+
+
+@router.get("/{node_id}/config", response_class=HTMLResponse)
+async def node_config(
+    node_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Конфиг Xray, который панель держит на этом сервере.
+
+    Смотреть его вручную не нужно — панель собирает и заливает конфиг сама,
+    но при разборе неполадок полезно видеть, что именно уехало на ноду.
+    """
+    node = await _get_node(session, node_id)
+    users = await load_users(session)
+    config = build_node_config(node, users)
+
+    return templates.TemplateResponse(
+        request,
+        "node_config.html",
+        {
+            "admin": admin,
+            "page": "nodes",
+            "node": node,
+            "config": json.dumps(config, indent=2, ensure_ascii=False),
+            "config_hash": config_hash(config),
+            "applied_hash": node.config_hash,
+            "clients": sum(
+                len((inbound.get("settings") or {}).get("clients") or [])
+                for inbound in config["inbounds"]
+            ),
+        },
+    )
 
 
 @router.post("/{node_id}/delete")

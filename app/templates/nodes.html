@@ -76,10 +76,16 @@
 <div class="panel" id="add-node" hidden>
   <header>Новый сервер</header>
   <div class="body">
-    {{ node_form('/nodes/create', none, 'Добавить и залить конфиг') }}
+    <div class="hint-box" style="margin-bottom:14px">
+      Панель и VPN на одной машине? Оставьте <b>адрес агента</b> пустым или
+      укажите <span class="mono">127.0.0.1</span> — тогда порт агента наружу
+      открывать не придётся. Подключения панель выдаст новому серверу
+      автоматически, если ничего не отмечать.
+    </div>
+    {{ node_form('/nodes/create', none, 'Добавить сервер') }}
     <p class="muted" style="margin-top:14px">
-      На сервере должен быть установлен агент. Команда установки —
-      в блоке ниже; токен из формы подставьте в <span class="mono">AGENT_TOKEN</span>.
+      После сохранения нажмите <b>«Установка»</b> в строке сервера — там будет
+      готовая команда с уже подставленным токеном.
     </p>
   </div>
 </div>
@@ -122,7 +128,9 @@
         <td class="muted">{{ node.last_seen_at | dt }}</td>
         <td>
           <div class="actions">
+            <button class="small" data-toggle="#install-{{ node.id }}">Установка</button>
             <button class="small" data-toggle="#node-{{ node.id }}">Изменить</button>
+            <a class="btn small" href="/nodes/{{ node.id }}/config">Конфиг</a>
             <form class="inline" method="post" action="/nodes/{{ node.id }}/sync">
               <button class="small" type="submit">Синхронизировать</button>
             </form>
@@ -144,6 +152,25 @@
         <td colspan="8" class="mono" style="color:var(--err)">{{ node.message }}</td>
       </tr>
       {% endif %}
+      <tr id="install-{{ node.id }}" hidden>
+        <td colspan="8">
+          <p class="muted" style="margin-top:0">
+            Выполните на сервере <b>{{ node.address }}</b> под root — токен уже подставлен:
+          </p>
+          <div class="code-block">
+            <div class="code" id="cmd-{{ node.id }}">curl -fsSL {{ panel_url }}/install/install_agent.sh -o install_agent.sh
+AGENT_TOKEN={{ node.agent_token }} PANEL_URL={{ panel_url }} bash install_agent.sh</div>
+            <button class="small" data-copy="#cmd-{{ node.id }}">Копировать</button>
+          </div>
+          <p class="muted" style="margin-bottom:0">
+            После установки закройте порт {{ node.agent_port }} для всех, кроме панели:
+            <span class="mono">ufw allow from &lt;IP панели&gt; to any port {{ node.agent_port }} proto tcp</span>
+            {% if node.api_host in ('127.0.0.1', 'localhost') %}
+              — у этого сервера агент слушает локально, так что открывать ничего не нужно.
+            {% endif %}
+          </p>
+        </td>
+      </tr>
       <tr id="node-{{ node.id }}" hidden>
         <td colspan="8">{{ node_form('/nodes/' ~ node.id ~ '/update', node) }}</td>
       </tr>
@@ -155,18 +182,14 @@
 </div>
 
 <div class="panel">
-  <header>Установка агента на сервер</header>
+  <header>Как это работает</header>
   <div class="body">
-    <p class="muted">Выполните на новом сервере под root:</p>
-    <textarea readonly rows="4" id="install-cmd">curl -fsSL {{ panel_url }}/install/install_agent.sh -o install_agent.sh
-AGENT_TOKEN=&lt;токен из формы&gt; PANEL_URL={{ panel_url }} bash install_agent.sh</textarea>
-    <div class="actions" style="margin-top:8px">
-      <button class="small" data-copy="#install-cmd">Копировать</button>
-    </div>
-    <p class="muted" style="margin-top:12px">
-      Скрипт ставит Xray-core и агента, поднимает systemd-сервис
-      <span class="mono">vpn-agent</span> на порту 8443. Закройте этот порт
-      файрволом для всех адресов, кроме адреса панели.
+    <p class="muted" style="margin-top:0">
+      Агент — единственное, что ставится на VPN-сервер. Он поднимает Xray,
+      принимает от панели конфиг и отдаёт статистику. Ядро настраивать руками
+      не нужно: панель собирает конфиг целиком и перезаливает его сама, когда
+      меняются пользователи или подключения. Посмотреть, что уехало на сервер,
+      можно кнопкой <b>«Конфиг»</b> в строке сервера.
     </p>
   </div>
 </div>

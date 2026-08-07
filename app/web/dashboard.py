@@ -13,6 +13,7 @@ from app.core.database import get_session
 from app.models.admin import Admin
 from app.models.audit import AuditLog
 from app.models.enums import NodeStatus, UserStatus
+from app.models.inbound import Inbound
 from app.models.node import Node
 from app.models.usage import NodeUsage, SystemUsage
 from app.models.user import User
@@ -85,12 +86,68 @@ async def _traffic_series(session: AsyncSession, hours: int = 24) -> List[Dict[s
     return series
 
 
+async def _setup_progress(session: AsyncSession) -> Dict[str, Any]:
+    """Шаги, которые нужно пройти до первого работающего подключения.
+
+    Пока они не пройдены, обычный дашборд бесполезен — на нём одни нули,
+    и непонятно, что делать дальше.
+    """
+    nodes = await session.scalar(select(func.count()).select_from(Node)) or 0
+    online = (
+        await session.scalar(
+            select(func.count()).select_from(Node).where(Node.status == NodeStatus.connected)
+        )
+        or 0
+    )
+    inbounds = await session.scalar(select(func.count()).select_from(Inbound)) or 0
+    users = await session.scalar(select(func.count()).select_from(User)) or 0
+
+    steps = [
+        {
+            "title": "Добавить сервер",
+            "hint": "Укажите адрес и скопируйте команду установки агента",
+            "done": nodes > 0,
+            "link": "/nodes",
+            "action": "К серверам",
+        },
+        {
+            "title": "Дождаться агента",
+            "hint": "Выполните команду на сервере — он станет зелёным",
+            "done": online > 0,
+            "link": "/nodes",
+            "action": "Проверить",
+        },
+        {
+            "title": "Создать подключение",
+            "hint": "Шаблон VLESS + REALITY: ключи панель сгенерирует сама",
+            "done": inbounds > 0,
+            "link": "/inbounds",
+            "action": "К подключениям",
+        },
+        {
+            "title": "Выдать доступ",
+            "hint": "Создайте пользователя и заберите ссылку или QR-код",
+            "done": users > 0,
+            "link": "/users",
+            "action": "К пользователям",
+        },
+    ]
+
+    return {
+        "steps": steps,
+        "done": sum(1 for step in steps if step["done"]),
+        "total": len(steps),
+        "complete": all(step["done"] for step in steps),
+    }
+
+
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
     session: AsyncSession = Depends(get_session),
     admin: Admin = Depends(web_admin),
 ):
+    setup = await _setup_progress(session)
     stats = await _collect_stats(session)
     series = await _traffic_series(session)
     peak = max((point["value"] for point in series), default=0) or 1
@@ -118,6 +175,7 @@ async def dashboard(
         {
             "admin": admin,
             "page": "dashboard",
+            "setup": setup,
             "stats": stats,
             "series": series,
             "peak": peak,

@@ -260,3 +260,48 @@ def test_audit_log_records_actions(client):
     page = client.get("/logs")
     assert "user.create" in page.text
     assert "user.revoke_sub" in page.text
+
+
+def test_quick_create_makes_working_inbound(client, inbound):
+    """Шаблон должен давать подключение, готовое к работе без правок."""
+    created = client.post(
+        "/inbounds/quick",
+        data={
+            "preset": "vless_reality",
+            "port": 8443,
+            "masking_domain": "www.samsung.com",
+        },
+        follow_redirects=False,
+    )
+    assert created.status_code == 303, created.text
+
+    page = client.get("/inbounds").text
+    assert "VLESS-REALITY-2" in page  # первый tag занят фикстурой
+
+    # Приватный ключ уходит в конфиг сервера, публичный там не нужен —
+    # он живёт только в ссылке клиента. (В разметке кавычки экранированы,
+    # поэтому ищем имена полей без них.)
+    config = client.get("/nodes/1/config").text
+    assert "privateKey" in config
+    assert "publicKey" not in config
+
+
+def test_node_config_page_shows_generated_config(client, inbound):
+    page = client.get("/nodes/1/config")
+    assert page.status_code == 200
+    assert "config.json" in page.text
+    assert "dokodemo-door" in page.text  # служебный api-inbound для статистики
+
+
+def test_user_page_shows_qr_and_links(client, auth):
+    """Подписку должно быть видно как ссылкой, так и QR-кодом."""
+    users = client.get("/api/users", headers=auth).json()["users"]
+    assert users
+
+    listing = client.get("/users").text
+    assert users[0]["username"] in listing
+
+    detail = client.get("/users/1")
+    assert detail.status_code == 200
+    assert 'class="segno"' in detail.text  # инлайновый SVG с QR
+    assert "vless://" in detail.text

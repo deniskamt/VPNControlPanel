@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Конфиг {{ node.name }} — VPN Panel{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Конфиг Xray: {{ node.name }}</h1>
+    <div class="sub">Собирается панелью автоматически — править на сервере не нужно</div>
+  </div>
+  <a class="btn" href="/nodes">К серверам</a>
+</div>
+
+<div class="panel">
+  <header>Состояние</header>
+  <div class="body">
+    <dl class="kv">
+      <dt>Адрес</dt><dd class="mono">{{ node.address }}</dd>
+      <dt>Агент</dt><dd class="mono">{{ node.agent_base_url }}</dd>
+      <dt>Подключений в конфиге</dt><dd>{{ node.inbounds | length }}</dd>
+      <dt>Клиентских ключей</dt><dd>{{ clients }}</dd>
+      <dt>Версия Xray</dt><dd class="mono">{{ node.xray_version or '—' }}</dd>
+      <dt>Хеш конфига</dt>
+      <dd class="mono">
+        {{ config_hash[:16] }}…
+        {% if applied_hash == config_hash %}
+          <span class="badge ok">применён на сервере</span>
+        {% elif applied_hash %}
+          <span class="badge warn">на сервере другой — уедет при следующей синхронизации</span>
+        {% else %}
+          <span class="badge mute">ещё не применялся</span>
+        {% endif %}
+      </dd>
+    </dl>
+    <div class="actions" style="margin-top:14px">
+      <form class="inline" method="post" action="/nodes/{{ node.id }}/sync">
+        <button type="submit" class="primary">Залить сейчас</button>
+      </form>
+      <form class="inline" method="post" action="/nodes/{{ node.id }}/restart">
+        <button type="submit">Перезапустить Xray</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <header>
+    config.json
+    <button class="small" data-copy="#node-config">Копировать</button>
+  </header>
+  <div class="body">
+    <div class="hint-box" style="margin-bottom:12px">
+      Приватные ключи REALITY и учётные данные пользователей — часть этого
+      конфига. Не выкладывайте его целиком в переписку или issue.
+    </div>
+    <div class="code" id="node-config">{{ config }}</div>
+  </div>
+</div>
+{% endblock %}

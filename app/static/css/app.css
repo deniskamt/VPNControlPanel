@@ -202,3 +202,106 @@ details.editor > div { padding: 0 16px 16px; }
   .sidebar .bottom { display: none; }
   .content { padding: 16px; }
 }
+
+/* ================= Мастер первого запуска ================= */
+.setup {
+  background: linear-gradient(135deg, rgba(79,124,255,0.10), rgba(79,124,255,0.02));
+  border: 1px solid rgba(79,124,255,0.28);
+}
+.setup > header { border-bottom-color: rgba(79,124,255,0.2); }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.steps li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.steps li:last-child { border-bottom: none; }
+.steps .num {
+  flex-shrink: 0;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 600;
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+}
+.steps li.done .num { background: rgba(53,196,138,0.15); border-color: var(--ok); color: var(--ok); }
+.steps li.current .num { background: var(--accent); border-color: var(--accent); color: #fff; }
+.steps .body { flex: 1; min-width: 0; }
+.steps .title { font-weight: 500; }
+.steps li.done .title { color: var(--muted); text-decoration: line-through; }
+.steps .hint { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.progress { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.progress > i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+
+/* ================= Шаблоны подключений ================= */
+.preset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.preset {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  cursor: pointer;
+  background: var(--bg);
+  display: block;
+  margin: 0;
+  transition: border-color .15s, background .15s;
+}
+.preset:hover { border-color: var(--accent); }
+.preset input { position: absolute; opacity: 0; pointer-events: none; }
+.preset input:checked ~ .preset-body { color: var(--text); }
+.preset:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.preset .preset-title { font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+.preset .preset-desc { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.preset .preset-note { color: var(--muted); font-size: 11px; margin-top: 8px; }
+.preset .tag {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--ok); border: 1px solid rgba(53,196,138,0.4);
+  background: rgba(53,196,138,0.12); border-radius: 999px; padding: 1px 7px;
+}
+
+/* ================= Код и QR ================= */
+.code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text);
+}
+.code-block { position: relative; }
+.code-block > button { position: absolute; top: 8px; right: 8px; }
+.qr {
+  background: #fff;
+  padding: 10px;
+  border-radius: 10px;
+  line-height: 0;
+  display: inline-block;
+}
+.qr-row { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.qr-row .qr-side { flex: 1; min-width: 240px; }
+
+/* ================= Мелочи оформления ================= */
+.sidebar nav a { display: flex; align-items: center; gap: 10px; }
+.sidebar nav a svg { width: 16px; height: 16px; flex-shrink: 0; opacity: .8; }
+.sidebar nav a.active svg { opacity: 1; }
+.hint-box {
+  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 10px 14px;
+  border-radius: 0 8px 8px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.hint-box b { color: var(--text); }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+.kv { display: grid; grid-template-columns: 180px 1fr; gap: 8px 16px; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }

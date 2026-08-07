@@ -9,6 +9,35 @@
   </div>
 </div>
 
+{% if not setup.complete %}
+<div class="panel setup">
+  <header>
+    Настройка: пройдено {{ setup.done }} из {{ setup.total }}
+    <span class="muted" style="font-weight:400">до первого рабочего подключения</span>
+  </header>
+  <div class="body" style="padding-bottom:0">
+    <div class="progress"><i style="width: {{ (setup.done / setup.total * 100) | round }}%"></i></div>
+  </div>
+  <ul class="steps">
+    {% set ns = namespace(first_open=true) %}
+    {% for step in setup.steps %}
+      {% set is_current = not step.done and ns.first_open %}
+      {% if is_current %}{% set ns.first_open = false %}{% endif %}
+      <li class="{{ 'done' if step.done else ('current' if is_current) }}">
+        <span class="num">{{ '✓' if step.done else loop.index }}</span>
+        <span class="body">
+          <span class="title">{{ step.title }}</span>
+          <span class="hint">{{ step.hint }}</span>
+        </span>
+        {% if not step.done %}
+          <a class="btn small {{ 'primary' if is_current }}" href="{{ step.link }}">{{ step.action }}</a>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <div class="cards">
   <div class="card">
     <div class="label">Пользователи</div>
