@@ -15,9 +15,12 @@ from app.models.enums import NetworkType, ProxyType, SecurityType, UserStatus
 from app.models.inbound import Inbound
 from app.models.node import Node
 from app.models.user import User
+from app.services import shadowsocks
 
 API_PORT = 10085
 API_TAG = "api"
+# Путь совпадает с тем, что читает агент (agent.py, XRAY_ACCESS_LOG).
+ACCESS_LOG = "/usr/local/etc/xray/access.log"
 
 
 def _stream_settings(inbound: Inbound) -> Dict[str, Any]:
@@ -125,22 +128,31 @@ def _client_entry(inbound: Inbound, user: User) -> Dict[str, Any] | None:
     # shadowsocks
     if not creds.get("password"):
         return None
-    return {
-        "password": creds["password"],
-        "method": creds.get("method") or opts.get("method", "chacha20-ietf-poly1305"),
+    method = opts.get("method") or creds.get("method") or shadowsocks.DEFAULT_METHOD
+    client: Dict[str, Any] = {
+        "password": shadowsocks.client_password(creds["password"], method),
         "email": email,
         "level": 0,
     }
+    # У 2022-методов шифрование задаётся на самом inbound'е, а не у клиента.
+    if not shadowsocks.is_2022(method):
+        client["method"] = method
+    return client
 
 
 def _inbound_settings(inbound: Inbound, clients: List[Dict[str, Any]]) -> Dict[str, Any]:
     if inbound.protocol == ProxyType.vless:
         return {"clients": clients, "decryption": "none"}
-    if inbound.protocol == ProxyType.vmess:
+    if inbound.protocol in (ProxyType.vmess, ProxyType.trojan):
         return {"clients": clients}
-    if inbound.protocol == ProxyType.trojan:
-        return {"clients": clients}
-    return {"clients": clients, "network": "tcp,udp"}
+
+    opts = inbound.settings or {}
+    method = opts.get("method", shadowsocks.DEFAULT_METHOD)
+    settings: Dict[str, Any] = {"clients": clients, "network": "tcp,udp"}
+    if shadowsocks.is_2022(method):
+        settings["method"] = method
+        settings["password"] = opts.get("password", "")
+    return settings
 
 
 def build_inbound(inbound: Inbound, users: Iterable[User]) -> Dict[str, Any]:
@@ -168,11 +180,20 @@ def build_inbound(inbound: Inbound, users: Iterable[User]) -> Dict[str, Any]:
 
 
 def build_node_config(node: Node, users: Iterable[User]) -> Dict[str, Any]:
-    """Полный конфиг Xray для ноды: служебный api + все её inbound'ы."""
+    """Полный конфиг Xray для ноды: служебный api + все её inbound'ы.
+
+    В конфиг попадают только те, кому этот сервер сейчас положен: активные,
+    не исчерпавшие ни общий лимит, ни лимит на этом сервере, и не закрытые
+    на нём вручную. Всё остальное — вопрос доступа, а не подписки: ссылку
+    пользователь видит, но ключа на сервере нет.
+    """
     active_users = [
         user
         for user in users
-        if user.status == UserStatus.active and not user.expired and not user.limited
+        if user.status == UserStatus.active
+        and not user.expired
+        and not user.limited
+        and user.allowed_on(node.id)
     ]
     allowed_by_inbound: Dict[int, List[User]] = {}
     for user in active_users:
@@ -194,7 +215,9 @@ def build_node_config(node: Node, users: Iterable[User]) -> Dict[str, Any]:
         inbounds.append(build_inbound(inbound, allowed_by_inbound.get(inbound.id, [])))
 
     return {
-        "log": {"loglevel": "warning"},
+        # Access-лог нужен для подсчёта устройств: агент достаёт из него
+        # адреса, с которых подключался каждый пользователь.
+        "log": {"loglevel": "warning", "access": ACCESS_LOG},
         "api": {
             "tag": API_TAG,
             "services": ["HandlerService", "StatsService", "LoggerService"],

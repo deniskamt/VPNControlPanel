@@ -15,6 +15,7 @@ from app.models.enums import NetworkType, ProxyType, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.services import presets as preset_service
+from app.services import xray_import
 from app.services.audit import log_action
 from app.services.worker import trigger_sync
 from app.web.templates import templates
@@ -185,6 +186,84 @@ async def create_inbound(
         actor=admin.username,
         target=inbound.tag,
         target_type="inbound",
+    )
+    await session.commit()
+
+    trigger_sync()
+    return _redirect()
+
+
+@router.post("/import")
+async def import_inbound(
+    payload: str = Form(...),
+    tag: str = Form(default=""),
+    node_ids: List[int] = Form(default=[]),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Добавить подключение, вставив inbound из конфига Xray.
+
+    Так переносится настройка из другой панели или с сервера, где Xray уже
+    настроен вручную.
+    """
+    try:
+        parsed_json = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(422, f"Это не похоже на JSON: {exc}") from exc
+
+    # Принимаем и один inbound, и целый конфиг Xray — берём из него первый
+    # пользовательский inbound, чтобы не заставлять вырезать кусок руками.
+    if isinstance(parsed_json, dict) and "inbounds" in parsed_json:
+        candidates = parsed_json.get("inbounds") or []
+    elif isinstance(parsed_json, list):
+        candidates = parsed_json
+    else:
+        candidates = [parsed_json]
+
+    parsed = None
+    for candidate in candidates:
+        try:
+            parsed = xray_import.parse_inbound(candidate)
+        except xray_import.ImportError_ as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if parsed:
+            break
+
+    if parsed is None:
+        raise HTTPException(422, "В присланном JSON нет подходящего inbound")
+
+    final_tag = (tag or parsed["tag"]).strip()
+    existing = await session.execute(select(Inbound).where(Inbound.tag == final_tag))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Подключение с tag «{final_tag}» уже есть"
+        )
+
+    inbound = Inbound(
+        tag=final_tag,
+        remark="импортировано из JSON",
+        protocol=parsed["protocol"],
+        port=parsed["port"],
+        listen=parsed["listen"],
+        network=parsed["network"],
+        security=parsed["security"],
+        settings=parsed["settings"],
+    )
+    if node_ids:
+        result = await session.execute(select(Node).where(Node.id.in_(node_ids)))
+    else:
+        result = await session.execute(select(Node).where(Node.is_enabled.is_(True)))
+    inbound.nodes = list(result.scalars().all())
+
+    session.add(inbound)
+    await log_action(
+        session,
+        action="inbound.import",
+        actor=admin.username,
+        target=final_tag,
+        target_type="inbound",
+        message="; ".join(parsed["warnings"]) or None,
+        level="warning" if parsed["warnings"] else "info",
     )
     await session.commit()
 

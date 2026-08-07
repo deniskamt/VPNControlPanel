@@ -157,6 +157,45 @@
   </div>
 
   <details class="editor">
+    <summary>Вставить готовый JSON — перенос из другой панели или с сервера</summary>
+    <div>
+      <form method="post" action="/inbounds/import">
+        <div class="form-row">
+          <label>
+            Inbound из конфига Xray — можно вставить и весь <span class="mono">config.json</span>,
+            подходящий inbound панель найдёт сама
+          </label>
+          <textarea name="payload" spellcheck="false" rows="10"
+                    placeholder='{"tag": "vless-in", "port": 443, "protocol": "vless", "settings": {...}, "streamSettings": {...}}'></textarea>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label>Tag <span class="muted">(пусто — взять из JSON)</span></label>
+            <input type="text" name="tag" placeholder="как в JSON">
+          </div>
+        </div>
+        {% if nodes %}
+        <div class="form-row" style="margin-top:12px">
+          <label>Серверы <span class="muted">(ничего не отмечено — поднимем на всех)</span></label>
+          <div class="checks">
+            {% for node in nodes %}
+              <label><input type="checkbox" name="node_ids" value="{{ node.id }}"> {{ node.name }}</label>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+        <button type="submit">Импортировать</button>
+        <p class="muted" style="margin-top:10px">
+          Переносятся протокол, порт, транспорт и параметры шифрования.
+          Пользователей из чужого конфига панель не берёт — ключи выдаются свои.
+          Для REALITY придётся дописать <span class="mono">publicKey</span>:
+          в серверном конфиге его нет.
+        </p>
+      </form>
+    </div>
+  </details>
+
+  <details class="editor">
     <summary>Создать вручную — если нужен нестандартный транспорт</summary>
     <div>
       {{ inbound_form('/inbounds/create', none, '{}', 'Создать') }}

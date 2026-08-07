@@ -46,7 +46,9 @@ def make_inbound(**overrides):
     return SimpleNamespace(**data)
 
 
-def make_user(inbounds, protocol=ProxyType.vless, settings=None, **overrides):
+def make_user(
+    inbounds, protocol=ProxyType.vless, settings=None, blocked_nodes=(), **overrides
+):
     creds = settings or {"id": "11111111-2222-3333-4444-555555555555"}
     data = {
         "username": "user_1",
@@ -57,6 +59,7 @@ def make_user(inbounds, protocol=ProxyType.vless, settings=None, **overrides):
         "proxy_settings": lambda wanted, _creds=creds, _p=protocol: (
             _creds if wanted == _p else None
         ),
+        "allowed_on": lambda node_id, _blocked=set(blocked_nodes): node_id not in _blocked,
     }
     data.update(overrides)
     return SimpleNamespace(**data)
@@ -251,3 +254,61 @@ def test_vmess_host_security_override():
     payload = json.loads(b64.b64decode(link[len("vmess://"):]).decode())
     assert payload["tls"] == "tls"
     assert payload["add"] == "cdn.example.com"
+
+
+def test_blocked_node_excludes_user_from_config():
+    """Закрытый сервер не должен получать ключ пользователя."""
+    inbound = make_inbound()
+    allowed = make_user([inbound])
+    blocked = make_user([inbound], username="user_2", blocked_nodes=[1])
+
+    config = build_node_config(make_node([inbound]), [allowed, blocked])
+    emails = [c["email"] for c in config["inbounds"][1]["settings"]["clients"]]
+
+    assert emails == ["user_1"]
+
+
+def test_blocked_node_disappears_from_subscription():
+    """И из подписки тоже — иначе клиент будет биться в закрытый сервер."""
+    inbound = make_inbound()
+    nodes = [
+        make_node([inbound]),
+        make_node([inbound], id=2, name="DE-1", address="de1.example.com"),
+    ]
+    links = build_user_links(make_user([inbound], blocked_nodes=[2]), nodes)
+
+    assert len(links) == 1
+    assert "nl1.example.com" in links[0]
+
+
+def test_shadowsocks_2022_keys_differ_from_plain():
+    """У 2022-методов ключ клиента выводится из пароля и имеет свою длину."""
+    from base64 import b64decode
+
+    from app.services import presets as preset_service
+
+    preset = preset_service.PRESETS_BY_KEY["shadowsocks_2022"]
+    settings = preset_service.build_settings(preset)
+    inbound = make_inbound(
+        protocol=ProxyType.shadowsocks, security=SecurityType.none, settings=settings
+    )
+    user = make_user(
+        [inbound], protocol=ProxyType.shadowsocks, settings={"password": "secret-pass"}
+    )
+
+    config = build_node_config(make_node([inbound]), [user])
+    inbound_settings = config["inbounds"][1]["settings"]
+
+    # Ключ сервера обязателен и лежит на самом inbound'е, а не у клиента.
+    assert inbound_settings["method"] == "2022-blake3-aes-128-gcm"
+    assert len(b64decode(inbound_settings["password"])) == 16
+    client = inbound_settings["clients"][0]
+    assert "method" not in client
+    assert len(b64decode(client["password"])) == 16
+    assert client["password"] != "secret-pass"
+
+    # В ссылку попадают оба ключа — серверный и пользовательский.
+    link = build_link(user, inbound, make_node([inbound]))
+    userinfo = b64decode(link[len("ss://"):].split("@")[0] + "==").decode()
+    assert userinfo.count(":") == 2
+    assert userinfo.startswith("2022-blake3-aes-128-gcm:")

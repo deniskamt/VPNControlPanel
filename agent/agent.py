@@ -39,6 +39,9 @@ XRAY_BIN = os.getenv("XRAY_BIN", "/usr/local/bin/xray")
 XRAY_CONFIG = Path(os.getenv("XRAY_CONFIG", "/usr/local/etc/xray/config.json"))
 XRAY_ASSETS = os.getenv("XRAY_ASSETS", "/usr/local/share/xray")
 XRAY_API = os.getenv("XRAY_API", "127.0.0.1:10085")
+ACCESS_LOG = Path(os.getenv("XRAY_ACCESS_LOG", "/usr/local/etc/xray/access.log"))
+# Сколько байт с конца access-лога читать при подсчёте устройств.
+ACCESS_TAIL_BYTES = int(os.getenv("XRAY_ACCESS_TAIL", str(2 * 1024 * 1024)))
 SSL_CERTFILE = os.getenv("SSL_CERTFILE", "")
 SSL_KEYFILE = os.getenv("SSL_KEYFILE", "")
 
@@ -72,6 +75,9 @@ class XrayProcess:
         self.started_at: Optional[float] = None
         self.last_error: str = ""
         self.config_hash: str = ""
+        # Путь берётся из применённого конфига: панель решает, куда Xray
+        # пишет access-лог, и агент должен читать именно этот файл.
+        self.access_log: Path = ACCESS_LOG
 
     @property
     def running(self) -> bool:
@@ -206,6 +212,20 @@ def apply_config(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         raise HTTPException(400, "Ожидается поле config с объектом конфига")
 
     XRAY_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+
+    # Xray отказывается стартовать, если не может открыть файл access-лога, —
+    # каталог под него надо создать заранее, иначе нода ляжет на пустом месте.
+    access_log = (config.get("log") or {}).get("access")
+    if isinstance(access_log, str) and access_log not in ("", "none"):
+        try:
+            Path(access_log).parent.mkdir(parents=True, exist_ok=True)
+            Path(access_log).touch(exist_ok=True)
+        except OSError as exc:
+            raise HTTPException(
+                400, f"не создать файл access-лога {access_log}: {exc}"
+            ) from exc
+        xray.access_log = Path(access_log)
+
     backup = XRAY_CONFIG.with_suffix(".json.bak")
     if XRAY_CONFIG.exists():
         backup.write_text(XRAY_CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
@@ -255,6 +275,61 @@ def _query_stats(reset: bool) -> Dict[str, int]:
         item["name"]: int(item.get("value", 0) or 0)
         for item in data.get("stat", [])
         if item.get("name")
+    }
+
+
+# Xray пишет строки вида:
+# 2026/08/07 21:28:39.492233 from 127.0.0.1:54342 accepted tcp:example.com:443 \
+#   [VLESS-REALITY >> DIRECT] email: user_1
+# Адрес идёт сразу после "from", без указания протокола; у IPv6 он в скобках.
+# Строки служебного api-inbound не содержат email и отсекаются сами.
+_ACCESS_RE = re.compile(
+    r"^(?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})[^ ]* from "
+    r"(?:tcp:|udp:)?\[?(?P<ip>[0-9a-fA-F.:]+?)\]?:\d+ .*email: (?P<email>\S+)"
+)
+
+
+@app.get("/online", dependencies=[Depends(require_token)])
+def online(minutes: int = Query(default=5, ge=1, le=1440)) -> Dict[str, Any]:
+    """Кто и с каких адресов подключался за последние `minutes` минут.
+
+    Считается по access-логу Xray. Панель по этим данным показывает число
+    устройств и следит за лимитом.
+    """
+    log_path = xray.access_log
+    if not log_path.exists():
+        return {"users": {}, "log": str(log_path), "available": False}
+
+    # Читаем хвост файла: лог может быть большим, а нужны свежие строки.
+    try:
+        with open(log_path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - ACCESS_TAIL_BYTES))
+            tail = handle.read().decode("utf-8", "replace")
+    except OSError as exc:
+        raise HTTPException(503, f"не читается access-лог: {exc}") from exc
+
+    since = time.time() - minutes * 60
+    users: Dict[str, set] = {}
+
+    for line in tail.splitlines():
+        match = _ACCESS_RE.match(line)
+        if not match:
+            continue
+        try:
+            moment = time.mktime(time.strptime(match.group("ts"), "%Y/%m/%d %H:%M:%S"))
+        except ValueError:
+            continue
+        if moment < since:
+            continue
+        users.setdefault(match.group("email"), set()).add(match.group("ip"))
+
+    return {
+        "users": {email: sorted(ips) for email, ips in users.items()},
+        "log": str(log_path),
+        "available": True,
+        "window_minutes": minutes,
     }
 
 

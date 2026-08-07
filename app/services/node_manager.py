@@ -16,6 +16,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.access import UserNodeAccess
 from app.models.enums import NodeStatus, UserStatus
 from app.models.node import Node
 from app.models.usage import NodeUsage, NodeUserUsage, SystemUsage
@@ -117,6 +118,91 @@ async def sync_all_nodes(session: AsyncSession, force: bool = False) -> int:
     return synced
 
 
+async def _get_or_create_access(
+    session: AsyncSession, user_id: int, node_id: int
+) -> UserNodeAccess:
+    existing = await session.execute(
+        select(UserNodeAccess).where(
+            UserNodeAccess.user_id == user_id, UserNodeAccess.node_id == node_id
+        )
+    )
+    access = existing.scalar_one_or_none()
+    if access is None:
+        access = UserNodeAccess(user_id=user_id, node_id=node_id)
+        session.add(access)
+        await session.flush()
+    return access
+
+
+async def refresh_devices(session: AsyncSession, nodes: Sequence[Node]) -> int:
+    """Собрать с нод адреса подключений и обновить счётчик устройств.
+
+    Адреса складываются по всем нодам: одно устройство, гуляющее между
+    серверами, не должно считаться дважды.
+    """
+    seen: Dict[str, set] = {}
+    reachable = False
+
+    for node in nodes:
+        if node.status != NodeStatus.connected:
+            continue
+        try:
+            payload = await NodeClient(node).online(settings.DEVICE_WINDOW_MINUTES)
+        except NodeError as exc:
+            logger.debug(f"Нода {node.name}: не удалось получить список устройств — {exc}")
+            continue
+        if not payload.get("available"):
+            continue
+        reachable = True
+        for username, addresses in (payload.get("users") or {}).items():
+            seen.setdefault(username, set()).update(addresses)
+
+    if not reachable:
+        return 0
+
+    result = await session.execute(select(User))
+    changed = 0
+    now = datetime.utcnow()
+
+    for user in result.scalars().all():
+        count = len(seen.get(user.username, ()))
+        if user.device_count != count:
+            user.device_count = count
+            changed += 1
+        if count:
+            user.devices_seen_at = now
+
+        if user.device_limit and count > user.device_limit:
+            await log_action(
+                session,
+                action="user.device_limit",
+                target=user.username,
+                target_type="user",
+                level="warning",
+                message=f"устройств {count} при лимите {user.device_limit}",
+                details={"addresses": sorted(seen.get(user.username, ()))[:20]},
+            )
+            notifier.notify_background(
+                f"⚠️ <b>{user.username}</b>: устройств {count} "
+                f"при лимите {user.device_limit}"
+            )
+            if settings.DEVICE_LIMIT_ACTION == "disable" and user.status == UserStatus.active:
+                user.status = UserStatus.disabled
+                user.last_status_change = now
+                await log_action(
+                    session,
+                    action="user.auto_status",
+                    target=user.username,
+                    target_type="user",
+                    level="warning",
+                    message="отключён из-за превышения лимита устройств",
+                )
+
+    if changed:
+        await session.commit()
+    return changed
+
+
 def _hour_bucket(moment: Optional[datetime] = None) -> datetime:
     moment = moment or datetime.utcnow()
     return moment.replace(minute=0, second=0, microsecond=0)
@@ -153,6 +239,11 @@ async def _record_usage(
         user.used_traffic += delta
         user.lifetime_used_traffic += delta
         user.online_at = now
+
+        # Трафик по каждому серверу отдельно: из него считается лимит на ноду
+        # и видно, куда именно ходит пользователь.
+        access = await _get_or_create_access(session, user.id, node.id)
+        access.used_traffic += delta
 
         existing = await session.execute(
             select(NodeUserUsage).where(

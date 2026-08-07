@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     String,
     Table,
     UniqueConstraint,
@@ -55,6 +56,12 @@ class User(Base, TimestampMixin):
     # Telegram ID владельца — чтобы связать с ботом.
     telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
+    # Сколько устройств разрешено одновременно. NULL — без ограничения.
+    # Считается по уникальным адресам в access-логе Xray за последние минуты.
+    device_limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    device_count: Mapped[int] = mapped_column(Integer, default=0)
+    devices_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     # Момент отзыва подписки: токены, выданные раньше, считаются невалидными.
     sub_revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     sub_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -75,6 +82,9 @@ class User(Base, TimestampMixin):
     inbounds: Mapped[List["Inbound"]] = relationship(  # noqa: F821
         secondary=user_inbounds, lazy="selectin"
     )
+    node_access: Mapped[List["UserNodeAccess"]] = relationship(  # noqa: F821
+        back_populates="user", cascade="all, delete-orphan", lazy="selectin"
+    )
 
     @property
     def is_active(self) -> bool:
@@ -93,6 +103,25 @@ class User(Base, TimestampMixin):
             if proxy.protocol == protocol:
                 return proxy.settings or {}
         return None
+
+    def access_for(self, node_id: int) -> Optional["UserNodeAccess"]:  # noqa: F821
+        for access in self.node_access:
+            if access.node_id == node_id:
+                return access
+        return None
+
+    def allowed_on(self, node_id: int) -> bool:
+        """Доступен ли пользователю этот сервер.
+
+        Отсутствие настройки означает «доступен» — иначе каждая новая нода
+        была бы закрыта для всех, пока её не отметят вручную.
+        """
+        access = self.access_for(node_id)
+        return access is None or not access.blocked
+
+    @property
+    def over_device_limit(self) -> bool:
+        return bool(self.device_limit) and self.device_count > self.device_limit
 
     def __repr__(self) -> str:  # pragma: no cover - отладка
         return f"<User {self.username} {self.status}>"

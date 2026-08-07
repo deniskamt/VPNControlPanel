@@ -1,3 +1,4 @@
+from app.models.access import UserNodeAccess
 from app.models.admin import Admin
 from app.models.audit import AuditLog
 from app.models.base import Base
@@ -25,6 +26,7 @@ __all__ = [
     "NodeUserUsage",
     "SystemUsage",
     "User",
+    "UserNodeAccess",
     "UserProxy",
     "node_inbounds",
     "user_inbounds",

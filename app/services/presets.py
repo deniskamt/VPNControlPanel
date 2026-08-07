@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.models.enums import NetworkType, ProxyType, SecurityType
+from app.services import shadowsocks
 from app.services.keys import generate_path, generate_reality_keypair, generate_short_id
 
 
@@ -45,6 +46,20 @@ PRESETS: List[Preset] = [
         notes=["Ключи и shortId панель сгенерирует сама"],
     ),
     Preset(
+        key="vless_reality_grpc",
+        title="VLESS + REALITY + gRPC",
+        description=(
+            "Тот же REALITY, но поверх gRPC: лучше держится на плохих сетях "
+            "и мобильном интернете."
+        ),
+        protocol=ProxyType.vless,
+        network=NetworkType.grpc,
+        security=SecurityType.reality,
+        default_port=2053,
+        asks_masking_domain=True,
+        notes=["Имя сервиса будет сгенерировано"],
+    ),
+    Preset(
         key="vless_ws",
         title="VLESS + WebSocket",
         description=(
@@ -58,6 +73,52 @@ PRESETS: List[Preset] = [
         notes=["Путь будет сгенерирован случайным", "Напрямую, без CDN, трафик не шифруется"],
     ),
     Preset(
+        key="vless_ws_tls",
+        title="VLESS + WebSocket + TLS",
+        description="WebSocket со своим сертификатом на сервере — без CDN.",
+        protocol=ProxyType.vless,
+        network=NetworkType.ws,
+        security=SecurityType.tls,
+        default_port=443,
+        asks_certificate=True,
+        notes=["Нужен домен и сертификат"],
+    ),
+    Preset(
+        key="vless_httpupgrade",
+        title="VLESS + HTTPUpgrade",
+        description=(
+            "Легче WebSocket при той же совместимости с CDN. "
+            "Поддерживается свежими клиентами."
+        ),
+        protocol=ProxyType.vless,
+        network=NetworkType.httpupgrade,
+        security=SecurityType.none,
+        default_port=8081,
+        notes=["Путь будет сгенерирован случайным"],
+    ),
+    Preset(
+        key="vmess_ws",
+        title="VMess + WebSocket",
+        description=(
+            "Старый добрый VMess. Пригодится ради совместимости со "
+            "старыми клиентами."
+        ),
+        protocol=ProxyType.vmess,
+        network=NetworkType.ws,
+        security=SecurityType.none,
+        default_port=8082,
+        notes=["Путь будет сгенерирован случайным"],
+    ),
+    Preset(
+        key="vmess_tcp",
+        title="VMess + TCP",
+        description="Простейший VMess без транспорта — как запасной канал.",
+        protocol=ProxyType.vmess,
+        network=NetworkType.tcp,
+        security=SecurityType.none,
+        default_port=8083,
+    ),
+    Preset(
         key="trojan_tls",
         title="Trojan + TLS",
         description="Классический TLS. Нужен домен и сертификат на сервере.",
@@ -69,6 +130,16 @@ PRESETS: List[Preset] = [
         notes=["Укажите пути к сертификату и ключу на сервере"],
     ),
     Preset(
+        key="trojan_ws",
+        title="Trojan + WebSocket",
+        description="Trojan за CDN: шифрование берёт на себя CDN.",
+        protocol=ProxyType.trojan,
+        network=NetworkType.ws,
+        security=SecurityType.none,
+        default_port=8084,
+        notes=["Путь будет сгенерирован случайным"],
+    ),
+    Preset(
         key="shadowsocks",
         title="Shadowsocks",
         description="Простой и быстрый протокол без TLS. Хорош как запасной вариант.",
@@ -77,6 +148,19 @@ PRESETS: List[Preset] = [
         security=SecurityType.none,
         default_port=8388,
         notes=["Шифрование chacha20-ietf-poly1305"],
+    ),
+    Preset(
+        key="shadowsocks_2022",
+        title="Shadowsocks 2022",
+        description=(
+            "Новая версия протокола: устойчивее к активному зондированию. "
+            "Нужен свежий клиент."
+        ),
+        protocol=ProxyType.shadowsocks,
+        network=NetworkType.tcp,
+        security=SecurityType.none,
+        default_port=8389,
+        notes=["Шифрование 2022-blake3-aes-128-gcm"],
     ),
 ]
 
@@ -131,9 +215,21 @@ def build_settings(
         settings["path"] = generate_path()
         if sni:
             settings["host"] = sni.strip()
+    elif preset.network == NetworkType.grpc:
+        settings["serviceName"] = generate_path().lstrip("/")
 
     if preset.protocol == ProxyType.shadowsocks:
-        settings["method"] = "chacha20-ietf-poly1305"
+        if preset.key.endswith("_2022"):
+            method = shadowsocks.DEFAULT_2022_METHOD
+            settings["method"] = method
+            # Ключ самого inbound'а: у 2022 он общий и обязателен.
+            settings["password"] = shadowsocks.generate_server_key(method)
+        else:
+            settings["method"] = shadowsocks.DEFAULT_METHOD
+
+    if preset.protocol == ProxyType.vless and preset.network != NetworkType.tcp:
+        # flow работает только на tcp — на остальных транспортах он ломает клиента.
+        settings.pop("flow", None)
 
     return settings
 

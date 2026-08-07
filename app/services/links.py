@@ -15,6 +15,7 @@ from app.models.enums import NetworkType, ProxyType, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.models.user import User
+from app.services import shadowsocks
 
 
 def _remark(template: str, node: Node, user: User, inbound: Inbound) -> str:
@@ -133,10 +134,11 @@ def build_link(
     opts = inbound.settings or {}
 
     if inbound.protocol == ProxyType.shadowsocks:
-        method = opts.get("method", "chacha20-ietf-poly1305")
-        password = creds.get("password", "")
-        userinfo = _b64(f"{method}:{password}").rstrip("=")
-        return f"ss://{userinfo}@{address}:{port}#{quote(remark)}"
+        method = opts.get("method", shadowsocks.DEFAULT_METHOD)
+        userinfo = shadowsocks.link_userinfo(
+            creds.get("password", ""), method, opts.get("password")
+        )
+        return f"ss://{_b64(userinfo).rstrip('=')}@{address}:{port}#{quote(remark)}"
 
     if inbound.protocol == ProxyType.vmess:
         payload = {
@@ -189,6 +191,10 @@ def build_user_links(user: User, nodes: List[Node]) -> List[str]:
 
     for node in sorted(nodes, key=lambda n: (n.sort_order, n.id)):
         if not node.is_enabled:
+            continue
+        # Закрытый для пользователя сервер не должен появляться в подписке:
+        # иначе клиент будет упорно долбиться в него и показывать ошибки.
+        if not user.allowed_on(node.id):
             continue
         for inbound in sorted(node.inbounds, key=lambda i: i.id):
             if not inbound.is_enabled or inbound.id not in allowed_ids:

@@ -37,6 +37,83 @@
     <div class="value" style="font-size:18px">{{ user.online_at | dt }}</div>
     <div class="hint">{{ user.sub_last_user_agent or '—' }}</div>
   </div>
+  <div class="card">
+    <div class="label">Устройства</div>
+    <div class="value" style="font-size:18px">
+      {{ user.device_count }}{% if user.device_limit %} / {{ user.device_limit }}{% endif %}
+      {% if user.over_device_limit %}<span class="badge err">превышен</span>{% endif %}
+    </div>
+    <div class="hint">
+      {% if user.device_limit %}по уникальным адресам{% else %}без ограничения{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <header>
+    Серверы
+    <span class="muted" style="font-weight:400">доступ и отдельные лимиты трафика</span>
+  </header>
+  {% if not nodes %}
+    <div class="empty">Серверов пока нет</div>
+  {% else %}
+  <form method="post" action="/users/{{ user.id }}/nodes">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Сервер</th><th>Доступ</th><th>Израсходовано</th><th>Лимит на этом сервере, ГБ</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for node in nodes %}
+          {% set access = access_by_node.get(node.id) %}
+          <tr>
+            <td>
+              {{ node.name }}
+              {% if node.country %}<span class="muted">· {{ node.country }}</span>{% endif %}
+              {% if not node.is_enabled %}<span class="badge mute">выключен</span>{% endif %}
+            </td>
+            <td>
+              <div class="checks">
+                <label>
+                  <input type="checkbox" name="node_allowed_{{ node.id }}"
+                         {% if not access or access.is_allowed %}checked{% endif %}>
+                  разрешён
+                </label>
+              </div>
+            </td>
+            <td>
+              {{ (access.used_traffic if access else 0) | bytes }}
+              {% if access and access.data_limit %}
+                {% set percent = usage_percent(access.used_traffic, access.data_limit) %}
+                <div class="bar"><i class="{{ 'err' if percent >= 90 else 'warn' if percent >= 70 else '' }}"
+                                    style="width: {{ percent }}%"></i></div>
+                {% if access.limited %}<span class="badge warn">лимит исчерпан</span>{% endif %}
+              {% endif %}
+            </td>
+            <td style="max-width:180px">
+              <input type="number" step="1" min="0" name="node_limit_{{ node.id }}"
+                     placeholder="без лимита"
+                     value="{{ (access.data_limit / GB) | round(0, 'floor') | int if access and access.data_limit else '' }}">
+            </td>
+            <td>
+              {% if access and access.used_traffic %}
+              <button class="small" type="submit"
+                      formaction="/users/{{ user.id }}/nodes/{{ node.id }}/reset">Обнулить</button>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="body">
+      <button type="submit" class="primary">Сохранить доступ</button>
+      <span class="muted" style="margin-left:10px">
+        Снятая галочка убирает сервер из подписки и ключ пользователя с этого сервера.
+      </span>
+    </div>
+  </form>
+  {% endif %}
 </div>
 
 <div class="panel">
@@ -86,6 +163,11 @@
               <option value="{{ item }}" {% if user.status.value == item %}selected{% endif %}>{{ item }}</option>
             {% endfor %}
           </select>
+        </div>
+        <div>
+          <label>Лимит устройств <span class="muted">(0 — без ограничения)</span></label>
+          <input type="number" name="device_limit" min="0"
+                 value="{{ user.device_limit or 0 }}">
         </div>
         <div>
           <label>Заметка</label>

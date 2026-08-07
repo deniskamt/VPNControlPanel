@@ -11,9 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import web_admin
 from app.core.config import settings
 from app.core.database import get_session
+from app.models.access import UserNodeAccess
 from app.models.admin import Admin
 from app.models.enums import DataLimitResetStrategy, ProxyType, UserStatus
 from app.models.inbound import Inbound
+from app.models.node import Node
 from app.models.user import User
 from app.services import users as user_service
 from app.services.audit import log_action
@@ -129,6 +131,13 @@ async def user_detail(
     )
     subscription_url = settings.subscription_url(user_service.subscription_token(user))
 
+    nodes = list(
+        (await session.execute(select(Node).order_by(Node.sort_order, Node.id)))
+        .scalars()
+        .all()
+    )
+    access_by_node = {access.node_id: access for access in user.node_access}
+
     return templates.TemplateResponse(
         request,
         "user_detail.html",
@@ -138,6 +147,8 @@ async def user_detail(
             "user": user,
             "links": links,
             "inbounds": inbounds,
+            "nodes": nodes,
+            "access_by_node": access_by_node,
             "user_inbound_ids": {inbound.id for inbound in user.inbounds},
             "protocols": [item.value for item in ProxyType],
             "statuses": [item.value for item in UserStatus],
@@ -196,6 +207,7 @@ async def update_user(
     request: Request,
     days: int = Form(default=0),
     data_limit_gb: float = Form(default=0),
+    device_limit: str = Form(default=""),
     user_status: str = Form(default="active"),
     note: str = Form(default=""),
     inbound_ids: List[int] = Form(default=[]),
@@ -203,6 +215,9 @@ async def update_user(
     admin: Admin = Depends(web_admin),
 ):
     user = await _get_user(session, user_id)
+    user.device_limit = int(device_limit) if device_limit.strip().isdigit() else None
+    if user.device_limit == 0:
+        user.device_limit = None
 
     if days:
         # Продление считаем от текущей даты окончания, если она в будущем.
@@ -236,6 +251,97 @@ async def update_user(
     await session.commit()
 
     trigger_sync()
+    return RedirectResponse(f"/users/{user_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{user_id}/nodes")
+async def update_node_access(
+    user_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Доступ к серверам и отдельные лимиты трафика на каждом из них.
+
+    Поля приходят парами node_allowed_<id> / node_limit_<id>, поэтому разбираем
+    форму вручную: список серверов заранее неизвестен.
+    """
+    user = await _get_user(session, user_id)
+    form = await request.form()
+
+    nodes = list(
+        (await session.execute(select(Node).order_by(Node.sort_order, Node.id)))
+        .scalars()
+        .all()
+    )
+    existing = {access.node_id: access for access in user.node_access}
+    changes: Dict[str, Any] = {}
+
+    for node in nodes:
+        allowed = f"node_allowed_{node.id}" in form
+        raw_limit = str(form.get(f"node_limit_{node.id}", "") or "").strip()
+        try:
+            limit_gb = float(raw_limit) if raw_limit else 0.0
+        except ValueError:
+            limit_gb = 0.0
+        limit = int(limit_gb * GB) if limit_gb > 0 else None
+
+        access = existing.get(node.id)
+        if access is None:
+            # Строку заводим только если что-то отличается от умолчания:
+            # «доступен, без отдельного лимита».
+            if allowed and limit is None:
+                continue
+            access = UserNodeAccess(user_id=user.id, node_id=node.id)
+            session.add(access)
+
+        if access.is_allowed != allowed or access.data_limit != limit:
+            changes[node.name] = {
+                "allowed": allowed,
+                "limit_gb": limit_gb if limit else None,
+            }
+        access.is_allowed = allowed
+        access.data_limit = limit
+
+    if changes:
+        await log_action(
+            session,
+            action="user.node_access",
+            actor=admin.username,
+            target=user.username,
+            target_type="user",
+            details=changes,
+            ip=request.client.host if request.client else None,
+        )
+    await session.commit()
+
+    trigger_sync()
+    return RedirectResponse(f"/users/{user_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{user_id}/nodes/{node_id}/reset")
+async def reset_node_traffic(
+    user_id: int,
+    node_id: int,
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Обнулить трафик пользователя на одном сервере."""
+    user = await _get_user(session, user_id)
+    access = user.access_for(node_id)
+    if access is not None:
+        access.used_traffic = 0
+        access.reset_at = datetime.utcnow()
+        await log_action(
+            session,
+            action="user.node_reset",
+            actor=admin.username,
+            target=user.username,
+            target_type="user",
+            details={"node_id": node_id},
+        )
+        await session.commit()
+        trigger_sync()
     return RedirectResponse(f"/users/{user_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 

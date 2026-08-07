@@ -12,6 +12,7 @@ from app.services.node_manager import (
     load_nodes,
     load_users,
     poll_node,
+    refresh_devices,
     sync_all_nodes,
     sync_node,
 )
@@ -51,6 +52,7 @@ async def _poll_loop() -> None:
                     if users is None:
                         users = await load_users(session)
                     await sync_node(session, node, users=users)
+                await refresh_devices(session, nodes)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - воркер не должен умирать

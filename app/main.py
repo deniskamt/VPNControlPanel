@@ -16,6 +16,7 @@ from app.api.deps import NotAuthenticated, redirect_to_login
 from app.core.config import settings
 from app.core.database import SessionLocal, engine
 from app.core.logging import setup_logging
+from app.core.schema import ensure_columns
 from app.core.security import hash_password
 from app.models.admin import Admin
 from app.models.base import Base
@@ -29,6 +30,9 @@ async def _prepare_database() -> None:
     """Создаём таблицы, если их ещё нет, и первого администратора."""
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+    # create_all не трогает существующие таблицы, поэтому колонки, добавленные
+    # в обновлениях, досоздаём отдельно.
+    await ensure_columns(engine)
 
     async with SessionLocal() as session:
         admins = await session.scalar(select(func.count()).select_from(Admin))
