@@ -50,19 +50,26 @@ env_value() {
   sed -n "s/^$1=//p" "$ENV_FILE" | tail -1
 }
 
+# Адреса приезжают из буфера обмена, а вместе с ними — перевод строки от
+# Windows, пробелы и невидимые символы. Один такой символ внутри IP ломает
+# его распознавание, и панель молча настраивается на https вместо http.
+sanitize_host() {
+  printf '%s' "$1" | tr -d '[:space:]' | tr -cd 'A-Za-z0-9.:/_-'
+}
+
 ask() {
   # ask ПЕРЕМЕННАЯ "Вопрос" "значение по умолчанию"
   local name="$1" prompt="$2" default="${3:-}" value="${!1:-}"
   if [[ -n "$value" ]]; then
-    printf -v "$name" '%s' "$value"
+    printf -v "$name" '%s' "$(sanitize_host "$value")"
     return
   fi
   if [[ ! -t 0 ]]; then
-    printf -v "$name" '%s' "$default"
+    printf -v "$name" '%s' "$(sanitize_host "$default")"
     return
   fi
   read -rp "$prompt${default:+ [$default]}: " value
-  printf -v "$name" '%s' "${value:-$default}"
+  printf -v "$name" '%s' "$(sanitize_host "${value:-$default}")"
 }
 
 IS_UPGRADE=0
