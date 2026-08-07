@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Серверы — VPN Panel{% endblock %}
+
+{% macro node_form(action, node=None, submit="Сохранить") %}
+<form method="post" action="{{ action }}">
+  <div class="form-grid">
+    <div>
+      <label>Название</label>
+      <input type="text" name="name" value="{{ node.name if node else '' }}" placeholder="Netherlands #1" required>
+    </div>
+    <div>
+      <label>Адрес для клиентов (домен или IP)</label>
+      <input type="text" name="address" value="{{ node.address if node else '' }}" placeholder="nl1.example.com" required>
+    </div>
+    <div>
+      <label>Адрес агента (если отличается)</label>
+      <input type="text" name="agent_host" value="{{ node.agent_host or '' if node else '' }}" placeholder="необязательно">
+    </div>
+    <div>
+      <label>Порт агента</label>
+      <input type="number" name="agent_port" value="{{ node.agent_port if node else 8443 }}" required>
+    </div>
+    <div>
+      <label>Токен агента {% if node %}<span class="muted">(пусто — не менять)</span>{% endif %}</label>
+      <input type="text" name="agent_token" class="mono"
+             value="{{ '' if node else new_token }}"
+             {% if not node %}required{% endif %}>
+    </div>
+    <div>
+      <label>Страна / метка</label>
+      <input type="text" name="country" value="{{ node.country or '' if node else '' }}" placeholder="NL">
+    </div>
+    <div>
+      <label>Коэффициент трафика</label>
+      <input type="number" step="0.1" name="usage_coefficient" value="{{ node.usage_coefficient if node else 1.0 }}">
+    </div>
+  </div>
+
+  <div class="form-row" style="margin-top:12px">
+    <div class="checks">
+      <label><input type="checkbox" name="agent_tls" {% if node and node.agent_tls %}checked{% endif %}> агент по HTTPS</label>
+      <label><input type="checkbox" name="agent_insecure" {% if not node or node.agent_insecure %}checked{% endif %}> не проверять сертификат</label>
+    </div>
+  </div>
+
+  <div class="form-row">
+    <label>Подключения на этом сервере</label>
+    {% if inbounds %}
+      <div class="checks">
+        {% for inbound in inbounds %}
+          <label>
+            <input type="checkbox" name="inbound_ids" value="{{ inbound.id }}"
+                   {% if node and inbound in node.inbounds %}checked{% endif %}>
+            {{ inbound.tag }} <span class="muted">({{ inbound.protocol.value }}:{{ inbound.port }})</span>
+          </label>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="muted">Сначала создайте подключение на странице <a href="/inbounds">Подключения</a></div>
+    {% endif %}
+  </div>
+
+  <button type="submit" class="primary">{{ submit }}</button>
+</form>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Серверы</h1>
+    <div class="sub">Ноды под управлением панели: {{ nodes | length }}</div>
+  </div>
+  <button data-toggle="#add-node" class="primary">Добавить сервер</button>
+</div>
+
+<div class="panel" id="add-node" hidden>
+  <header>Новый сервер</header>
+  <div class="body">
+    {{ node_form('/nodes/create', none, 'Добавить и залить конфиг') }}
+    <p class="muted" style="margin-top:14px">
+      На сервере должен быть установлен агент. Команда установки —
+      в блоке ниже; токен из формы подставьте в <span class="mono">AGENT_TOKEN</span>.
+    </p>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Список серверов</header>
+  {% if not nodes %}
+    <div class="empty">Серверов пока нет</div>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Сервер</th><th>Статус</th><th>Xray</th><th>CPU / RAM</th>
+        <th>Трафик</th><th>Подключения</th><th>Последний ответ</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for node in nodes %}
+      <tr>
+        <td>
+          <div>{{ node.name }}</div>
+          <div class="mono muted">{{ node.address }}:{{ node.agent_port }}</div>
+        </td>
+        <td>
+          {% if not node.is_enabled %}
+            <span class="badge mute">выключен</span>
+          {% elif node.status.value == 'connected' %}
+            <span class="badge ok">онлайн</span>
+          {% elif node.status.value == 'error' %}
+            <span class="badge err" title="{{ node.message or '' }}">ошибка</span>
+          {% else %}
+            <span class="badge warn">подключение</span>
+          {% endif %}
+        </td>
+        <td class="mono">{{ node.xray_version or '—' }}</td>
+        <td>{% if node.cpu_percent is not none %}{{ node.cpu_percent }}% / {{ node.mem_percent }}%{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td>{{ (node.uplink + node.downlink) | bytes }}</td>
+        <td>{{ node.inbounds | length }}</td>
+        <td class="muted">{{ node.last_seen_at | dt }}</td>
+        <td>
+          <div class="actions">
+            <button class="small" data-toggle="#node-{{ node.id }}">Изменить</button>
+            <form class="inline" method="post" action="/nodes/{{ node.id }}/sync">
+              <button class="small" type="submit">Синхронизировать</button>
+            </form>
+            <form class="inline" method="post" action="/nodes/{{ node.id }}/restart">
+              <button class="small" type="submit">Перезапустить</button>
+            </form>
+            <form class="inline" method="post" action="/nodes/{{ node.id }}/toggle">
+              <button class="small" type="submit">{{ 'Выключить' if node.is_enabled else 'Включить' }}</button>
+            </form>
+            <form class="inline" method="post" action="/nodes/{{ node.id }}/delete"
+                  data-confirm="Удалить сервер {{ node.name }}?">
+              <button class="small danger" type="submit">Удалить</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% if node.message and node.status.value == 'error' %}
+      <tr>
+        <td colspan="8" class="mono" style="color:var(--err)">{{ node.message }}</td>
+      </tr>
+      {% endif %}
+      <tr id="node-{{ node.id }}" hidden>
+        <td colspan="8">{{ node_form('/nodes/' ~ node.id ~ '/update', node) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <header>Установка агента на сервер</header>
+  <div class="body">
+    <p class="muted">Выполните на новом сервере под root:</p>
+    <textarea readonly rows="4" id="install-cmd">curl -fsSL {{ panel_url }}/install/install_agent.sh -o install_agent.sh
+AGENT_TOKEN=&lt;токен из формы&gt; PANEL_URL={{ panel_url }} bash install_agent.sh</textarea>
+    <div class="actions" style="margin-top:8px">
+      <button class="small" data-copy="#install-cmd">Копировать</button>
+    </div>
+    <p class="muted" style="margin-top:12px">
+      Скрипт ставит Xray-core и агента, поднимает systemd-сервис
+      <span class="mono">vpn-agent</span> на порту 8443. Закройте этот порт
+      файрволом для всех адресов, кроме адреса панели.
+    </p>
+  </div>
+</div>
+{% endblock %}

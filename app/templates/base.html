@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}VPN Panel{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">VPN <span>Panel</span></div>
+    <nav>
+      <a href="/" class="{{ 'active' if page == 'dashboard' }}">Обзор</a>
+      <a href="/nodes" class="{{ 'active' if page == 'nodes' }}">Серверы</a>
+      <a href="/inbounds" class="{{ 'active' if page == 'inbounds' }}">Подключения</a>
+      <a href="/users" class="{{ 'active' if page == 'users' }}">Пользователи</a>
+      <a href="/logs" class="{{ 'active' if page == 'logs' }}">Журнал</a>
+      <a href="/settings" class="{{ 'active' if page == 'settings' }}">Настройки</a>
+    </nav>
+    <div class="bottom">
+      {{ admin.username }}<br>
+      <a href="/logout">Выйти</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

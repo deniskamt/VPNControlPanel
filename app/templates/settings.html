@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Настройки — VPN Panel{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Настройки</h1>
+    <div class="sub">Значения задаются переменными окружения и применяются при старте</div>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Подписки</header>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><td>Базовый адрес</td><td class="mono">{{ settings.subscription_base }}</td></tr>
+        <tr><td>Путь</td><td class="mono">/{{ settings.SUBSCRIPTION_PATH }}/&lt;token&gt;</td></tr>
+        <tr><td>Название профиля</td><td class="mono">{{ settings.SUBSCRIPTION_TITLE }}</td></tr>
+        <tr><td>Интервал обновления у клиента</td><td>{{ settings.SUBSCRIPTION_UPDATE_INTERVAL }} ч</td></tr>
+        <tr>
+          <td>Секрет подписи токенов</td>
+          <td>
+            {% if settings.SUBSCRIPTION_SECRET %}
+              <span class="badge ok">задан отдельно</span>
+              <span class="muted">старые ссылки Marzban работают</span>
+            {% else %}
+              <span class="badge warn">используется SECRET_KEY</span>
+              <span class="muted">перенесите секрет из таблицы jwt старой базы, иначе прежние ссылки не откроются</span>
+            {% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Уведомления в Telegram</header>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr>
+          <td>Бот</td>
+          <td>
+            {% if settings.TELEGRAM_BOT_TOKEN %}
+              <span class="badge ok">подключён</span>
+            {% else %}
+              <span class="badge mute">не задан TELEGRAM_BOT_TOKEN</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr><td>Получатели</td><td class="mono">{{ settings.TELEGRAM_ADMIN_IDS | join(', ') or '—' }}</td></tr>
+        <tr>
+          <td>Алерты о серверах</td>
+          <td>{% if settings.NOTIFY_NODE_STATUS %}включены{% else %}выключены{% endif %}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="body">
+    {% if sent %}<p class="badge ok">Сообщение отправлено</p>{% endif %}
+    <form method="post" action="/settings/test-telegram">
+      <button type="submit" {% if not settings.TELEGRAM_BOT_TOKEN %}disabled{% endif %}>
+        Отправить тестовое уведомление
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Фоновые задачи</header>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><td>Опрос серверов</td><td>каждые {{ settings.NODE_POLL_INTERVAL }} с</td></tr>
+        <tr><td>Проверка сроков и лимитов</td><td>каждые {{ settings.ENFORCE_INTERVAL }} с</td></tr>
+        <tr><td>Таймаут запроса к агенту</td><td>{{ settings.NODE_TIMEOUT }} с</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Интеграция с ботами</header>
+  <div class="body">
+    <p class="muted">
+      Панель отвечает на те же запросы, что и Marzban. В ботах достаточно
+      указать адрес панели:
+    </p>
+    <textarea readonly rows="4" id="bot-env">MARZBAN_URL={{ settings.PANEL_URL }}
+MARZBAN_USERNAME=&lt;логин админа панели&gt;
+MARZBAN_PASSWORD=&lt;пароль&gt;
+SUBSCRIPTION_BASE_URL={{ settings.subscription_base }}</textarea>
+    <div class="actions" style="margin-top:8px">
+      <button class="small" data-copy="#bot-env">Копировать</button>
+    </div>
+  </div>
+</div>
+{% endblock %}

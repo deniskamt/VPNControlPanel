@@ -1,0 +1,204 @@
+:root {
+  --bg: #0f1117;
+  --bg-soft: #161923;
+  --bg-card: #1b1f2b;
+  --border: #262b3a;
+  --text: #e6e8ef;
+  --muted: #8b93a7;
+  --accent: #4f7cff;
+  --accent-soft: rgba(79, 124, 255, 0.15);
+  --ok: #35c48a;
+  --warn: #e5a13a;
+  --err: #ef5d5d;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.layout { display: flex; min-height: 100vh; }
+
+/* --- Боковое меню --- */
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--bg-soft);
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+}
+.sidebar .brand {
+  font-size: 16px;
+  font-weight: 700;
+  padding: 0 20px 20px;
+  letter-spacing: 0.3px;
+}
+.sidebar .brand span { color: var(--accent); }
+.sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+.sidebar nav a {
+  padding: 10px 20px;
+  color: var(--muted);
+  border-left: 2px solid transparent;
+}
+.sidebar nav a:hover { color: var(--text); background: rgba(255,255,255,0.03); text-decoration: none; }
+.sidebar nav a.active {
+  color: var(--text);
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.sidebar .bottom { margin-top: auto; padding: 16px 20px 0; color: var(--muted); font-size: 12px; }
+
+/* --- Контент --- */
+.content { flex: 1; padding: 24px 28px 48px; min-width: 0; }
+.page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
+.page-head h1 { font-size: 20px; margin: 0; }
+.page-head .sub { color: var(--muted); font-size: 13px; }
+
+/* --- Карточки и сетки --- */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; margin-bottom: 24px; }
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
+.card .value { font-size: 24px; font-weight: 600; margin-top: 6px; }
+.card .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+.panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.panel > header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.panel > .body { padding: 16px; }
+
+/* --- Таблицы --- */
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 10px 16px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
+tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: rgba(255,255,255,0.02); }
+.table-wrap { overflow-x: auto; }
+
+/* --- Статусы --- */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge.ok { color: var(--ok); background: rgba(53,196,138,0.12); border-color: rgba(53,196,138,0.3); }
+.badge.warn { color: var(--warn); background: rgba(229,161,58,0.12); border-color: rgba(229,161,58,0.3); }
+.badge.err { color: var(--err); background: rgba(239,93,93,0.12); border-color: rgba(239,93,93,0.3); }
+.badge.mute { color: var(--muted); background: rgba(139,147,167,0.12); border-color: rgba(139,147,167,0.25); }
+
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot.ok { background: var(--ok); }
+.dot.err { background: var(--err); }
+.dot.warn { background: var(--warn); }
+.dot.mute { background: var(--muted); }
+
+/* --- Формы --- */
+label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+input[type=text], input[type=password], input[type=number], select, textarea {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+}
+textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; min-height: 110px; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.form-row { margin-bottom: 12px; }
+.checks { display: flex; flex-wrap: wrap; gap: 10px; }
+.checks label { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 13px; margin: 0; }
+.checks input { width: auto; }
+
+button, .btn {
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+button:hover, .btn:hover { border-color: var(--accent); text-decoration: none; }
+button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger, .btn.danger { color: var(--err); border-color: rgba(239,93,93,0.4); }
+button.small, .btn.small { padding: 4px 9px; font-size: 12px; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+form.inline { display: inline; }
+
+/* --- Прогресс трафика --- */
+.bar { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 5px; min-width: 90px; }
+.bar > i { display: block; height: 100%; background: var(--accent); }
+.bar > i.warn { background: var(--warn); }
+.bar > i.err { background: var(--err); }
+
+/* --- График трафика --- */
+.chart { display: flex; align-items: flex-end; gap: 3px; height: 120px; }
+.chart .col { flex: 1; background: var(--accent-soft); border-radius: 3px 3px 0 0; position: relative; min-height: 2px; }
+.chart .col > i { display: block; background: var(--accent); border-radius: 3px 3px 0 0; width: 100%; position: absolute; bottom: 0; }
+.chart-labels { display: flex; gap: 3px; margin-top: 6px; color: var(--muted); font-size: 10px; }
+.chart-labels span { flex: 1; text-align: center; overflow: hidden; }
+
+/* --- Мелочи --- */
+.muted { color: var(--muted); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.copy-field { display: flex; gap: 6px; align-items: center; }
+.copy-field input { flex: 1; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+.filters .field { min-width: 150px; }
+.pagination { display: flex; gap: 6px; margin-top: 14px; align-items: center; }
+.empty { padding: 28px; text-align: center; color: var(--muted); }
+details.editor { border-top: 1px solid var(--border); }
+details.editor > summary { padding: 10px 16px; cursor: pointer; color: var(--muted); font-size: 13px; }
+details.editor > div { padding: 0 16px 16px; }
+.links-list { display: flex; flex-direction: column; gap: 6px; }
+
+/* --- Логин --- */
+.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+.login-box { width: 340px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 26px; }
+.login-box h1 { font-size: 18px; margin: 0 0 18px; text-align: center; }
+.login-box .error { color: var(--err); font-size: 13px; margin-bottom: 12px; text-align: center; }
+.login-box button { width: 100%; margin-top: 6px; }
+
+@media (max-width: 760px) {
+  .layout { flex-direction: column; }
+  .sidebar { width: 100%; flex-direction: row; align-items: center; padding: 10px; overflow-x: auto; }
+  .sidebar .brand { padding: 0 14px 0 6px; }
+  .sidebar nav { flex-direction: row; }
+  .sidebar nav a { border-left: none; border-bottom: 2px solid transparent; padding: 8px 12px; white-space: nowrap; }
+  .sidebar nav a.active { border-left-color: transparent; border-bottom-color: var(--accent); }
+  .sidebar .bottom { display: none; }
+  .content { padding: 16px; }
+}

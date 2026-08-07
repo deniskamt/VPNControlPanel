@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Обзор — VPN Panel{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Обзор</h1>
+    <div class="sub">Состояние сети и подписок</div>
+  </div>
+</div>
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Пользователи</div>
+    <div class="value">{{ stats.total_users }}</div>
+    <div class="hint">активных: {{ stats.active_users }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Онлайн</div>
+    <div class="value">{{ stats.online_users }}</div>
+    <div class="hint">за последние 5 минут</div>
+  </div>
+  <div class="card">
+    <div class="label">Истекли</div>
+    <div class="value">{{ stats.expired_users }}</div>
+    <div class="hint">лимит исчерпан: {{ stats.limited_users }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Трафик за сутки</div>
+    <div class="value">{{ stats.traffic_24h | bytes }}</div>
+    <div class="hint">всего: {{ stats.total_traffic | bytes }}</div>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Трафик по часам (24 ч)</header>
+  <div class="body">
+    <div class="chart">
+      {% for point in series %}
+        <div class="col" title="{{ point.hour }} — {{ point.value | bytes }}">
+          <i style="height: {{ (point.value / peak * 100) | round(1) }}%"></i>
+        </div>
+      {% endfor %}
+    </div>
+    <div class="chart-labels">
+      {% for point in series %}
+        <span>{% if loop.index0 % 4 == 0 %}{{ point.hour }}{% endif %}</span>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <header>
+    Серверы
+    <a class="btn small" href="/nodes">Управление</a>
+  </header>
+  <div data-refresh="/partials/nodes-status" data-refresh-every="15">
+    {% include "partials/nodes_status.html" %}
+  </div>
+</div>
+
+<div class="panel">
+  <header>
+    Последние события
+    <a class="btn small" href="/logs">Весь журнал</a>
+  </header>
+  {% if logs %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Время</th><th>Кто</th><th>Действие</th><th>Объект</th><th>Комментарий</th></tr></thead>
+    <tbody>
+      {% for entry in logs %}
+      <tr>
+        <td class="muted">{{ entry.created_at | dt }}</td>
+        <td>{{ entry.actor }}</td>
+        <td class="mono">{{ entry.action }}</td>
+        <td>{{ entry.target or '—' }}</td>
+        <td class="muted">{{ entry.message or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+    <div class="empty">Событий пока нет</div>
+  {% endif %}
+</div>
+{% endblock %}

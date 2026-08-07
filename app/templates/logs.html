@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Журнал — VPN Panel{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Журнал</h1>
+    <div class="sub">Записей: {{ total }}</div>
+  </div>
+</div>
+
+<div class="panel">
+  <header>
+    <form class="filters" method="get" action="/logs">
+      <div class="field">
+        <label>Действие</label>
+        <select name="action">
+          <option value="">все</option>
+          {% for item in actions %}
+            <option value="{{ item }}" {% if action == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label>Уровень</label>
+        <select name="level">
+          <option value="">все</option>
+          {% for item in ['info', 'warning', 'error'] %}
+            <option value="{{ item }}" {% if level == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit">Показать</button>
+    </form>
+  </header>
+
+  {% if not entries %}
+    <div class="empty">Записей нет</div>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Время</th><th>Кто</th><th>Действие</th><th>Объект</th><th>Комментарий</th><th>IP</th></tr>
+    </thead>
+    <tbody>
+    {% for entry in entries %}
+      <tr>
+        <td class="muted">{{ entry.created_at | dt }}</td>
+        <td>{{ entry.actor }}</td>
+        <td>
+          <span class="mono">{{ entry.action }}</span>
+          {% if entry.level == 'error' %}<span class="badge err">error</span>
+          {% elif entry.level == 'warning' %}<span class="badge warn">warn</span>{% endif %}
+        </td>
+        <td>{{ entry.target or '—' }}</td>
+        <td class="muted">{{ entry.message or '' }}</td>
+        <td class="mono muted">{{ entry.ip or '' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</div>
+
+{% if pages > 1 %}
+<div class="pagination">
+  {% for number in range(1, pages + 1) %}
+    {% if number == page_number %}
+      <span class="btn small primary">{{ number }}</span>
+    {% else %}
+      <a class="btn small" href="/logs?page={{ number }}&action={{ action }}&level={{ level }}">{{ number }}</a>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

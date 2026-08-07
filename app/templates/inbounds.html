@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Подключения — VPN Panel{% endblock %}
+
+{% macro inbound_form(action, inbound=None, raw="{}", submit="Сохранить") %}
+<form method="post" action="{{ action }}">
+  <div class="form-grid">
+    <div>
+      <label>Tag (уникальный)</label>
+      <input type="text" name="tag" value="{{ inbound.tag if inbound else '' }}"
+             placeholder="VLESS TCP REALITY" required>
+    </div>
+    <div>
+      <label>Протокол</label>
+      <select name="protocol">
+        {% for item in protocols %}
+          <option value="{{ item }}" {% if inbound and inbound.protocol.value == item %}selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Порт</label>
+      <input type="number" name="port" value="{{ inbound.port if inbound else 443 }}" required>
+    </div>
+    <div>
+      <label>Транспорт</label>
+      <select name="network">
+        {% for item in networks %}
+          <option value="{{ item }}" {% if inbound and inbound.network.value == item %}selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Шифрование</label>
+      <select name="security">
+        {% for item in securities %}
+          <option value="{{ item }}" {% if inbound and inbound.security.value == item %}selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Listen</label>
+      <input type="text" name="listen" value="{{ inbound.listen if inbound else '0.0.0.0' }}">
+    </div>
+  </div>
+
+  <div class="form-row" style="margin-top:12px">
+    <label>Параметры транспорта и шифрования (JSON)</label>
+    <textarea name="settings" spellcheck="false">{{ raw }}</textarea>
+  </div>
+
+  <div class="form-row">
+    <label>Поднять на серверах</label>
+    {% if nodes %}
+      <div class="checks">
+        {% for node in nodes %}
+          <label>
+            <input type="checkbox" name="node_ids" value="{{ node.id }}"
+                   {% if inbound and node in inbound.nodes %}checked{% endif %}>
+            {{ node.name }}
+          </label>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="muted">Серверов пока нет — добавьте на странице <a href="/nodes">Серверы</a></div>
+    {% endif %}
+  </div>
+
+  <button type="submit" class="primary">{{ submit }}</button>
+</form>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Подключения</h1>
+    <div class="sub">Inbound'ы Xray, которые панель раскатывает на серверы</div>
+  </div>
+  <button data-toggle="#add-inbound" class="primary">Добавить подключение</button>
+</div>
+
+<div class="panel" id="add-inbound" hidden>
+  <header>Новое подключение</header>
+  <div class="body">
+    {{ inbound_form('/inbounds/create', none, '{\n  "dest": "www.microsoft.com:443",\n  "serverNames": ["www.microsoft.com"],\n  "privateKey": "",\n  "publicKey": "",\n  "shortIds": [""],\n  "fingerprint": "chrome",\n  "flow": "xtls-rprx-vision"\n}', 'Создать') }}
+    <details class="editor" style="margin-top:14px">
+      <summary>Подсказка по параметрам</summary>
+      <div>
+        <p class="muted">
+          <b>REALITY</b>: <span class="mono">dest</span>, <span class="mono">serverNames</span>,
+          <span class="mono">privateKey</span>, <span class="mono">publicKey</span>,
+          <span class="mono">shortIds</span>, <span class="mono">fingerprint</span>,
+          <span class="mono">flow</span>. Пару ключей выдаёт команда
+          <span class="mono">xray x25519</span> на сервере: приватный идёт в конфиг,
+          публичный — в ссылку клиента.
+        </p>
+        <p class="muted">
+          <b>TLS</b>: <span class="mono">sni</span>, <span class="mono">alpn</span>,
+          <span class="mono">certificateFile</span>, <span class="mono">keyFile</span>
+          (пути к сертификату на сервере).
+        </p>
+        <p class="muted">
+          <b>WebSocket / httpupgrade</b>: <span class="mono">path</span>, <span class="mono">host</span>.
+          <b>gRPC</b>: <span class="mono">serviceName</span>.
+          <b>Shadowsocks</b>: <span class="mono">method</span>.
+        </p>
+      </div>
+    </details>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Список подключений</header>
+  {% if not inbounds %}
+    <div class="empty">Подключений пока нет</div>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Tag</th><th>Протокол</th><th>Порт</th><th>Транспорт</th><th>Серверы</th><th>Хосты</th><th>Статус</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for inbound in inbounds %}
+      <tr>
+        <td>{{ inbound.tag }}{% if inbound.remark %}<div class="muted">{{ inbound.remark }}</div>{% endif %}</td>
+        <td>{{ inbound.protocol.value }}</td>
+        <td class="mono">{{ inbound.port }}</td>
+        <td>{{ inbound.network.value }} / {{ inbound.security.value }}</td>
+        <td>{{ inbound.nodes | map(attribute='name') | join(', ') or '—' }}</td>
+        <td>{{ inbound.hosts | length }}</td>
+        <td>
+          {% if inbound.is_enabled %}<span class="badge ok">вкл</span>
+          {% else %}<span class="badge mute">выкл</span>{% endif %}
+        </td>
+        <td>
+          <div class="actions">
+            <button class="small" data-toggle="#inbound-{{ inbound.id }}">Изменить</button>
+            <form class="inline" method="post" action="/inbounds/{{ inbound.id }}/toggle">
+              <button class="small" type="submit">{{ 'Выключить' if inbound.is_enabled else 'Включить' }}</button>
+            </form>
+            <form class="inline" method="post" action="/inbounds/{{ inbound.id }}/delete"
+                  data-confirm="Удалить подключение {{ inbound.tag }}?">
+              <button class="small danger" type="submit">Удалить</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      <tr id="inbound-{{ inbound.id }}" hidden>
+        <td colspan="8">
+          {{ inbound_form('/inbounds/' ~ inbound.id ~ '/update', inbound, settings_json[inbound.id]) }}
+
+          <div class="panel" style="margin-top:16px">
+            <header>Хосты для ссылок</header>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Название</th><th>Адрес</th><th>Порт</th><th>SNI</th><th>Host</th><th>Path</th><th>Шифрование</th><th>Сервер</th><th></th></tr></thead>
+                <tbody>
+                {% for host in inbound.hosts %}
+                  <tr>
+                    <td>{{ host.remark }}</td>
+                    <td class="mono">{{ host.address or '—' }}</td>
+                    <td class="mono">{{ host.port or '—' }}</td>
+                    <td class="mono">{{ host.sni or '—' }}</td>
+                    <td class="mono">{{ host.host or '—' }}</td>
+                    <td class="mono">{{ host.path or '—' }}</td>
+                    <td>{{ host.security.value if host.security else '—' }}</td>
+                    <td>{{ host.node_id or 'все' }}</td>
+                    <td>
+                      <form class="inline" method="post" action="/inbounds/hosts/{{ host.id }}/delete">
+                        <button class="small danger" type="submit">Удалить</button>
+                      </form>
+                    </td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <div class="body">
+              <form method="post" action="/inbounds/{{ inbound.id }}/hosts/create">
+                <div class="form-grid">
+                  <div><label>Название</label><input type="text" name="remark" value="{node}"></div>
+                  <div><label>Адрес</label><input type="text" name="address" placeholder="как у сервера"></div>
+                  <div><label>Порт</label><input type="text" name="port" placeholder="как у inbound"></div>
+                  <div><label>SNI</label><input type="text" name="sni"></div>
+                  <div><label>Host</label><input type="text" name="host"></div>
+                  <div><label>Path</label><input type="text" name="path"></div>
+                  <div><label>ALPN</label><input type="text" name="alpn" placeholder="h2,http/1.1"></div>
+                  <div><label>Fingerprint</label><input type="text" name="fingerprint" placeholder="chrome"></div>
+                  <div>
+                    <label>Шифрование в ссылке</label>
+                    <select name="security">
+                      <option value="">как у подключения</option>
+                      {% for item in securities %}<option value="{{ item }}">{{ item }}</option>{% endfor %}
+                    </select>
+                  </div>
+                  <div>
+                    <label>Только для сервера</label>
+                    <select name="node_id">
+                      <option value="">все</option>
+                      {% for node in nodes %}<option value="{{ node.id }}">{{ node.name }}</option>{% endfor %}
+                    </select>
+                  </div>
+                </div>
+                <div class="checks" style="margin:10px 0">
+                  <label><input type="checkbox" name="allowinsecure"> разрешить самоподписанный сертификат</label>
+                </div>
+                <button type="submit">Добавить хост</button>
+              </form>
+            </div>
+          </div>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

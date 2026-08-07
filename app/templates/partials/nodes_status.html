@@ -1,0 +1,49 @@
+{% if not nodes %}
+  <div class="empty">Серверов пока нет. <a href="/nodes">Добавить первый</a></div>
+{% else %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Сервер</th>
+      <th>Адрес</th>
+      <th>Статус</th>
+      <th>CPU / RAM</th>
+      <th>Xray</th>
+      <th>Трафик</th>
+      <th>Аптайм</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for node in nodes %}
+    <tr>
+      <td>
+        {{ node.name }}
+        {% if node.country %}<span class="muted">· {{ node.country }}</span>{% endif %}
+      </td>
+      <td class="mono">{{ node.address }}</td>
+      <td>
+        {% if not node.is_enabled %}
+          <span class="dot mute"></span><span class="muted">выключен</span>
+        {% elif node.status.value == 'connected' %}
+          <span class="dot ok"></span>онлайн
+        {% elif node.status.value == 'error' %}
+          <span class="dot err"></span><span title="{{ node.message or '' }}">ошибка</span>
+        {% else %}
+          <span class="dot warn"></span>подключение
+        {% endif %}
+      </td>
+      <td>
+        {% if node.cpu_percent is not none %}
+          {{ node.cpu_percent }}% / {{ node.mem_percent }}%
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td class="mono">{{ node.xray_version or '—' }}</td>
+      <td>{{ (node.uplink + node.downlink) | bytes }}</td>
+      <td>{{ node.uptime_seconds | uptime }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}

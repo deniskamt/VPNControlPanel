@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}{{ user.username }} — VPN Panel{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ user.username }}</h1>
+    <div class="sub">
+      создан {{ user.created_at | dt }}
+      {% if user.telegram_id %}· Telegram ID {{ user.telegram_id }}{% endif %}
+    </div>
+  </div>
+  <a class="btn" href="/users">К списку</a>
+</div>
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Статус</div>
+    <div class="value" style="font-size:18px">{{ user.status.value }}</div>
+    <div class="hint">изменён {{ user.last_status_change | dt }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Трафик</div>
+    <div class="value" style="font-size:18px">{{ user.used_traffic | bytes }}</div>
+    <div class="hint">
+      {% if user.data_limit %}лимит {{ user.data_limit | bytes }}{% else %}без лимита{% endif %}
+      · всего {{ user.lifetime_used_traffic | bytes }}
+    </div>
+  </div>
+  <div class="card">
+    <div class="label">Подписка</div>
+    <div class="value" style="font-size:18px">{{ user.expire | expire }}</div>
+    <div class="hint">обновлена клиентом {{ user.sub_updated_at | dt }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Последняя активность</div>
+    <div class="value" style="font-size:18px">{{ user.online_at | dt }}</div>
+    <div class="hint">{{ user.sub_last_user_agent or '—' }}</div>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Ссылка подписки</header>
+  <div class="body">
+    <div class="copy-field">
+      <input type="text" class="mono" readonly id="sub-url" value="{{ subscription_url }}">
+      <button class="small" data-copy="#sub-url">Копировать</button>
+    </div>
+    <p class="muted" style="margin-top:10px">
+      Эта ссылка вставляется в приложение. Она переживает продление подписки и
+      смену сервера — меняется только при отзыве.
+    </p>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Изменить</header>
+  <div class="body">
+    <form method="post" action="/users/{{ user.id }}/update">
+      <div class="form-grid">
+        <div>
+          <label>Продлить на, дней</label>
+          <input type="number" name="days" value="0">
+        </div>
+        <div>
+          <label>Лимит трафика, ГБ (0 — без лимита)</label>
+          <input type="number" step="1" name="data_limit_gb"
+                 value="{{ (user.data_limit / GB) | round(0, 'floor') | int if user.data_limit else 0 }}">
+        </div>
+        <div>
+          <label>Статус</label>
+          <select name="user_status">
+            {% for item in statuses %}
+              <option value="{{ item }}" {% if user.status.value == item %}selected{% endif %}>{{ item }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Заметка</label>
+          <input type="text" name="note" value="{{ user.note or '' }}">
+        </div>
+      </div>
+
+      <div class="form-row" style="margin-top:12px">
+        <label>Доступные подключения</label>
+        <div class="checks">
+          {% for inbound in inbounds %}
+            <label>
+              <input type="checkbox" name="inbound_ids" value="{{ inbound.id }}"
+                     {% if inbound.id in user_inbound_ids %}checked{% endif %}>
+              {{ inbound.tag }} <span class="muted">({{ inbound.protocol.value }})</span>
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <button type="submit" class="primary">Сохранить</button>
+    </form>
+
+    <div class="actions" style="margin-top:14px">
+      <form class="inline" method="post" action="/users/{{ user.id }}/reset"
+            data-confirm="Обнулить счётчик трафика?">
+        <button type="submit">Обнулить трафик</button>
+      </form>
+      <form class="inline" method="post" action="/users/{{ user.id }}/revoke"
+            data-confirm="Отозвать подписку? Старая ссылка и все ключи перестанут работать.">
+        <button type="submit" class="danger">Отозвать подписку</button>
+      </form>
+      <form class="inline" method="post" action="/users/{{ user.id }}/delete"
+            data-confirm="Удалить пользователя {{ user.username }}?">
+        <button type="submit" class="danger">Удалить</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Ключи ({{ user.proxies | length }})</header>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Протокол</th><th>Параметры</th></tr></thead>
+      <tbody>
+        {% for proxy in user.proxies %}
+        <tr>
+          <td>{{ proxy.protocol.value }}</td>
+          <td class="mono">
+            {% for key, value in (proxy.settings or {}).items() %}
+              {{ key }}={{ value }}{% if not loop.last %} · {% endif %}
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Конфигурации ({{ links | length }})</header>
+  <div class="body">
+    {% if links %}
+      <div class="links-list">
+        {% for link in links %}
+          <div class="copy-field">
+            <input type="text" class="mono" readonly id="link-{{ loop.index }}" value="{{ link }}">
+            <button class="small" data-copy="#link-{{ loop.index }}">Копировать</button>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="muted">
+        Ссылок нет: пользователю не назначено ни одного подключения или нет включённых серверов.
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
