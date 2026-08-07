@@ -50,7 +50,7 @@
             {% endif %}
           </td>
         </tr>
-        <tr><td>Получатели</td><td class="mono">{{ settings.TELEGRAM_ADMIN_IDS | join(', ') or '—' }}</td></tr>
+        <tr><td>Получатели</td><td class="mono">{{ settings.telegram_admin_ids | join(', ') or '—' }}</td></tr>
         <tr>
           <td>Алерты о серверах</td>
           <td>{% if settings.NOTIFY_NODE_STATUS %}включены{% else %}выключены{% endif %}</td>

@@ -19,7 +19,7 @@ async def send_message(text: str, chat_id: Optional[int] = None) -> None:
     if not settings.TELEGRAM_BOT_TOKEN:
         return
 
-    targets = [chat_id] if chat_id else settings.TELEGRAM_ADMIN_IDS
+    targets = [chat_id] if chat_id else settings.telegram_admin_ids
     if not targets:
         return
 

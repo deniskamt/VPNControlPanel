@@ -63,7 +63,10 @@ class Settings(BaseSettings):
 
     # --- Уведомления в Telegram -------------------------------------------
     TELEGRAM_BOT_TOKEN: str = ""
-    TELEGRAM_ADMIN_IDS: List[int] = []
+    # Строка, а не List[int]: pydantic-settings пытается разобрать поля
+    # составных типов как JSON ещё до валидаторов, и пустое значение в .env
+    # (TELEGRAM_ADMIN_IDS=) роняет запуск. Разбираем сами — см. telegram_admin_ids.
+    TELEGRAM_ADMIN_IDS: str = ""
     # Слать ли уведомления о падении/подъёме нод.
     NOTIFY_NODE_STATUS: bool = True
 
@@ -77,15 +80,6 @@ class Settings(BaseSettings):
             value = value.replace("postgresql://", "postgresql+asyncpg://", 1)
         return value
 
-    @field_validator("TELEGRAM_ADMIN_IDS", mode="before")
-    @classmethod
-    def _parse_admin_ids(cls, value) -> List[int]:
-        if value is None or value == "":
-            return []
-        if isinstance(value, str):
-            return [int(part) for part in value.replace(" ", "").split(",") if part]
-        return value
-
     @field_validator("PANEL_URL", "SUBSCRIPTION_BASE_URL")
     @classmethod
     def _strip_slash(cls, value: str) -> str:
@@ -95,6 +89,20 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_sub_path(cls, value: str) -> str:
         return value.strip("/")
+
+    @property
+    def telegram_admin_ids(self) -> List[int]:
+        """Список ID из строки вида «123456789, 987654321»."""
+        ids: List[int] = []
+        for part in self.TELEGRAM_ADMIN_IDS.replace(" ", "").split(","):
+            if not part:
+                continue
+            try:
+                ids.append(int(part))
+            except ValueError:
+                # Одна опечатка не должна ломать запуск панели целиком.
+                continue
+        return ids
 
     @property
     def sync_database_url(self) -> str:

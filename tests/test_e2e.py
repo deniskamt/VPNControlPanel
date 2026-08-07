@@ -13,21 +13,10 @@ import os
 
 import pytest
 
-DATABASE_URL = os.getenv("TEST_DATABASE_URL")
+# Переменные окружения выставляет tests/conftest.py — до импорта приложения.
 pytestmark = pytest.mark.skipif(
-    not DATABASE_URL, reason="нужен TEST_DATABASE_URL с живым Postgres"
+    not os.getenv("TEST_DATABASE_URL"), reason="нужен TEST_DATABASE_URL с живым Postgres"
 )
-
-if DATABASE_URL:
-    os.environ["DATABASE_URL"] = DATABASE_URL
-    os.environ["SECRET_KEY"] = "e2e-secret"
-    os.environ["SUBSCRIPTION_SECRET"] = "e2e-subscription-secret"
-    os.environ["SUBSCRIPTION_BASE_URL"] = "https://vpn.example.com"
-    os.environ["SUBSCRIPTION_PATH"] = "c"
-    os.environ["ADMIN_USERNAME"] = "admin"
-    os.environ["ADMIN_PASSWORD"] = "admin-password"
-    os.environ["NODE_POLL_INTERVAL"] = "3600"
-    os.environ["ENFORCE_INTERVAL"] = "3600"
 
 
 @pytest.fixture(scope="module")

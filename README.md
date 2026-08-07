@@ -63,7 +63,23 @@ scripts/       установка агента, миграция из Marzban
 tests/         тесты, включая сверку с алгоритмом Marzban
 ```
 
-## Запуск
+## Установка на сервер
+
+```bash
+apt update && apt install -y git
+git clone https://github.com/deniskamt/VPNControlPanel.git /opt/vpn-panel
+cd /opt/vpn-panel
+bash scripts/install_panel.sh
+```
+
+Скрипт поставит Postgres, соберёт окружение, сгенерирует `.env` с ключами,
+поднимет systemd-сервис на `127.0.0.1:8000` и напечатает пароль
+администратора. Останется настроить nginx и сертификат.
+
+Полная инструкция — **[docs/DEPLOY.md](docs/DEPLOY.md)**: ручная установка,
+nginx, TLS, файрвол, перенос данных, обновления, бэкапы и вариант с Railway.
+
+Для разработки локально:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -75,9 +91,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 Таблицы создаются при первом старте. Тогда же заводится администратор из
 `ADMIN_USERNAME` / `ADMIN_PASSWORD` — но только если в базе нет ни одного
 админа.
-
-На Railway: подключить репозиторий, добавить Postgres, задать переменные из
-`.env.example`. `railway.json` и `Procfile` уже в репозитории.
 
 ## Переход с Marzban
 
