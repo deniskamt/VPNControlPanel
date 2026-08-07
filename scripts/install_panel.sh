@@ -8,9 +8,14 @@
 #   cd /opt/vpn-panel
 #   bash scripts/install_panel.sh
 #
+# Для пробной установки без домена достаточно указать IP сервера — скрипт сам
+# перейдёт на http, поднимет панель на всех интерфейсах и не будет ждать nginx.
+#
 # Переменные (все необязательные, скрипт спросит недостающее):
-#   PANEL_DOMAIN        — домен панели, напр. panel.example.com
-#   SUBSCRIPTION_DOMAIN — домен подписок (тот же, что был у Marzban)
+#   PANEL_ADDRESS       — домен или IP панели, напр. panel.example.com или 1.2.3.4
+#   PANEL_SCHEME        — http или https; по умолчанию http для IP, https для домена
+#   APP_PORT            — порт панели, по умолчанию 8000
+#   SUBSCRIPTION_ADDRESS— адрес в ссылках подписок (для переезда с Marzban — его домен)
 #   SUBSCRIPTION_PATH   — префикс пути подписки, по умолчанию c
 #   ADMIN_USERNAME      — логин первого админа, по умолчанию admin
 #   ADMIN_PASSWORD      — пароль первого админа, по умолчанию генерируется
@@ -85,11 +90,35 @@ else
 fi
 
 echo "==> Настройки панели"
-ask PANEL_DOMAIN "Домен панели (без https://)" "$(hostname -f 2>/dev/null || echo localhost)"
-ask SUBSCRIPTION_DOMAIN "Домен подписок (тот же, что был у Marzban)" "$PANEL_DOMAIN"
+DEFAULT_ADDRESS="$(hostname -I 2>/dev/null | awk '{print $1}')"
+ask PANEL_ADDRESS "Домен или IP панели" "${DEFAULT_ADDRESS:-localhost}"
+
+# Без домена сертификат взять неоткуда, поэтому для голого IP работаем по http
+# и слушаем все интерфейсы — nginx в такой схеме не нужен.
+if [[ "$PANEL_ADDRESS" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ || "$PANEL_ADDRESS" == "localhost" ]]; then
+  PANEL_SCHEME="${PANEL_SCHEME:-http}"
+else
+  PANEL_SCHEME="${PANEL_SCHEME:-https}"
+fi
+
+if [[ "$PANEL_SCHEME" == "http" ]]; then
+  BIND_HOST="0.0.0.0"
+  PANEL_URL="http://${PANEL_ADDRESS}:${APP_PORT}"
+else
+  # За nginx: панель слушает только локально, наружу её пускает он.
+  BIND_HOST="127.0.0.1"
+  PANEL_URL="https://${PANEL_ADDRESS}"
+fi
+
+ask SUBSCRIPTION_ADDRESS "Адрес в ссылках подписок" "$PANEL_URL"
 ask SUBSCRIPTION_PATH "Префикс пути подписки" "c"
 ask ADMIN_USERNAME "Логин администратора" "admin"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(12))')}"
+
+# Адрес подписок можно указать и без схемы — дополним сами.
+if [[ "$SUBSCRIPTION_ADDRESS" != http://* && "$SUBSCRIPTION_ADDRESS" != https://* ]]; then
+  SUBSCRIPTION_ADDRESS="${PANEL_SCHEME}://${SUBSCRIPTION_ADDRESS}"
+fi
 
 echo "==> Создаём окружение Python"
 if [[ ! -d "$INSTALL_DIR/.venv" ]]; then
@@ -107,7 +136,7 @@ fi
 SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
 cat > "$INSTALL_DIR/.env" <<EOF
 SECRET_KEY=${SECRET_KEY}
-PANEL_URL=https://${PANEL_DOMAIN}
+PANEL_URL=${PANEL_URL}
 DEBUG=false
 
 DATABASE_URL=${DATABASE_URL}
@@ -115,7 +144,7 @@ DATABASE_URL=${DATABASE_URL}
 ADMIN_USERNAME=${ADMIN_USERNAME}
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
-SUBSCRIPTION_BASE_URL=https://${SUBSCRIPTION_DOMAIN}
+SUBSCRIPTION_BASE_URL=${SUBSCRIPTION_ADDRESS}
 SUBSCRIPTION_PATH=${SUBSCRIPTION_PATH}
 # ВАЖНО: при переходе с Marzban сюда нужно вписать секрет из таблицы jwt
 # старой базы — его печатает scripts/migrate_from_marzban.py. Без этого
@@ -146,7 +175,7 @@ Type=simple
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${INSTALL_DIR}/.env
 ExecStart=${INSTALL_DIR}/.venv/bin/uvicorn app.main:app \\
-    --host 127.0.0.1 --port ${APP_PORT} \\
+    --host ${BIND_HOST} --port ${APP_PORT} \\
     --proxy-headers --forwarded-allow-ips '*'
 Restart=always
 RestartSec=5
@@ -162,22 +191,36 @@ EOF
   systemctl --no-pager --lines=15 status "$SERVICE_NAME" || true
 fi
 
+if [[ "$PANEL_SCHEME" == "http" ]]; then
+  NEXT_STEPS="  1. Открыть порт: ufw allow ${APP_PORT}/tcp
+     (лучше только для своего адреса: ufw allow from <ваш IP> to any port ${APP_PORT})
+  2. Создать подключение и сервер в панели, поставить агента
+  3. Перед боевым запуском — домен и HTTPS, см. docs/DEPLOY.md"
+  WARNING="ВНИМАНИЕ: панель работает по http, пароль и токены идут открытым
+текстом. Это годится для проверки, но не для боевой установки."
+else
+  NEXT_STEPS="  1. Поставить nginx и сертификат — команды в docs/DEPLOY.md
+  2. При переходе с Marzban: перенести базу и вписать SUBSCRIPTION_SECRET
+     python scripts/migrate_from_marzban.py --source ... --dry-run
+  3. Добавить серверы в панели и поставить на них агента"
+  WARNING="Панель слушает 127.0.0.1:${APP_PORT} — наружу её пускает nginx."
+fi
+
 cat <<EOF
 
 ======================================================================
 Панель установлена в ${INSTALL_DIR}
-Слушает 127.0.0.1:${APP_PORT} — наружу её пускает nginx (следующий шаг).
+${WARNING}
 
-Вход:      https://${PANEL_DOMAIN}
+Вход:      ${PANEL_URL}
 Логин:     ${ADMIN_USERNAME}
 Пароль:    ${ADMIN_PASSWORD}
            (сохраните — второй раз он не покажется)
 
+Подписки:  ${SUBSCRIPTION_ADDRESS}/${SUBSCRIPTION_PATH}/<token>
+
 Дальше:
-  1. Поставить nginx и сертификат — команды в docs/DEPLOY.md
-  2. При переходе с Marzban: перенести базу и вписать SUBSCRIPTION_SECRET
-     python scripts/migrate_from_marzban.py --source ... --dry-run
-  3. Добавить серверы в панели и поставить на них агента
+${NEXT_STEPS}
 
 Логи:      journalctl -u ${SERVICE_NAME} -f
 Рестарт:   systemctl restart ${SERVICE_NAME}
