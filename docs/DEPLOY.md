@@ -364,6 +364,7 @@ systemctl cat vpn-panel | grep WorkingDirectory
 | забыт пароль администратора | `.venv/bin/python scripts/admin.py set-password --username admin` |
 | завести второго администратора | `.venv/bin/python scripts/admin.py set-password --username operator` |
 | посмотреть, кто есть | `.venv/bin/python scripts/admin.py list` |
+| узнать команду установки агента | `.venv/bin/python scripts/node.py install` |
 | перевыпустить ключи, оставив данные | `REINSTALL=1 bash scripts/install_panel.sh` (см. предупреждение ниже) |
 | снести панель полностью | `bash scripts/uninstall_panel.sh` |
 
@@ -425,8 +426,17 @@ systemctl status vpn-agent
 journalctl -u vpn-agent -n 30 --no-pager
 ```
 
-Если сервиса нет — скопируйте команду из кнопки «Установка» в строке сервера
-и выполните её на этом сервере под root.
+Если сервиса нет — агент не установлен. Скопируйте команду из кнопки
+**«Установка»** в строке сервера и выполните её под root. Скачивать
+`agent.py` отдельно бесполезно: его ставит скрипт вместе с Xray и
+systemd-юнитом.
+
+Ту же команду с уже подставленным токеном печатает панель из консоли:
+
+```bash
+cd /opt/vpn-panel
+.venv/bin/python scripts/node.py install
+```
 
 **2. Порт закрыт файрволом.** Проверяется с машины, где стоит панель:
 
