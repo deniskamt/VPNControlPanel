@@ -75,7 +75,9 @@ if [[ ! -d "$INSTALL_DIR/venv" ]]; then
   python3 -m venv "$INSTALL_DIR/venv"
 fi
 "$INSTALL_DIR/venv/bin/pip" install --quiet --upgrade pip
-"$INSTALL_DIR/venv/bin/pip" install --quiet "fastapi==0.115.6" "uvicorn==0.34.0"
+# Диапазоны, а не точные версии: на свежих Ubuntu системный Python новее,
+# и жёсткий пин отправил бы pip собирать pydantic-core из исходников.
+"$INSTALL_DIR/venv/bin/pip" install --quiet "fastapi>=0.115.6,<1" "uvicorn>=0.34.0,<1"
 
 cat > "$INSTALL_DIR/agent.env" <<EOF
 AGENT_TOKEN=${AGENT_TOKEN}
