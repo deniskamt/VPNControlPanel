@@ -8,6 +8,11 @@
 #   cd /opt/vpn-panel
 #   bash scripts/install_panel.sh
 #
+# Скрипт можно запускать повторно: если рядом уже есть .env, прежние ключи,
+# база и пароли сохраняются, обновляются только зависимости и сервис.
+# Полная переустановка с новыми ключами — REINSTALL=1 (старые ссылки подписок
+# при этом перестанут работать, если SUBSCRIPTION_SECRET не задан явно).
+#
 # Для пробной установки без домена достаточно указать IP сервера — скрипт сам
 # перейдёт на http, поднимет панель на всех интерфейсах и не будет ждать nginx.
 #
@@ -20,13 +25,14 @@
 #   ADMIN_USERNAME      — логин первого админа, по умолчанию admin
 #   ADMIN_PASSWORD      — пароль первого админа, по умолчанию генерируется
 #   DATABASE_URL        — если база уже есть; иначе поднимается локальный Postgres
+#   REINSTALL=1         — не сохранять прежние ключи и настройки
 #   SKIP_SYSTEMD=1      — не трогать systemd (для ручной настройки)
 
 set -euo pipefail
 
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE_NAME="vpn-panel"
-APP_PORT="${APP_PORT:-8000}"
+ENV_FILE="$INSTALL_DIR/.env"
 
 if [[ "$EUID" -ne 0 ]]; then
   echo "Запускать нужно от root" >&2
@@ -37,6 +43,12 @@ if [[ ! -f "$INSTALL_DIR/app/main.py" ]]; then
   echo "Не вижу исходников панели в $INSTALL_DIR" >&2
   exit 1
 fi
+
+# Значение из уже существующего .env (пусто, если файла или ключа нет).
+env_value() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  sed -n "s/^$1=//p" "$ENV_FILE" | tail -1
+}
 
 ask() {
   # ask ПЕРЕМЕННАЯ "Вопрос" "значение по умолчанию"
@@ -53,13 +65,56 @@ ask() {
   printf -v "$name" '%s' "${value:-$default}"
 }
 
+IS_UPGRADE=0
+if [[ -f "$ENV_FILE" && "${REINSTALL:-0}" != "1" ]]; then
+  IS_UPGRADE=1
+  echo "==> Панель здесь уже установлена — обновляем её"
+  echo "    Ключи, база и пароль администратора сохраняются."
+  echo "    Полная переустановка с нуля: REINSTALL=1 bash scripts/install_panel.sh"
+
+  # Секреты не трогаем: SECRET_KEY подписывает сессии, а при пустом
+  # SUBSCRIPTION_SECRET — ещё и токены подписок. Его смена ломает выданные ссылки.
+  SECRET_KEY="${SECRET_KEY:-$(env_value SECRET_KEY)}"
+  SUBSCRIPTION_SECRET="${SUBSCRIPTION_SECRET:-$(env_value SUBSCRIPTION_SECRET)}"
+  DATABASE_URL="${DATABASE_URL:-$(env_value DATABASE_URL)}"
+
+  # Остальные настройки переносим как есть, чтобы не потерять правки руками.
+  SUBSCRIPTION_TITLE="${SUBSCRIPTION_TITLE:-$(env_value SUBSCRIPTION_TITLE)}"
+  SUBSCRIPTION_UPDATE_INTERVAL="${SUBSCRIPTION_UPDATE_INTERVAL:-$(env_value SUBSCRIPTION_UPDATE_INTERVAL)}"
+  TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-$(env_value TELEGRAM_BOT_TOKEN)}"
+  TELEGRAM_ADMIN_IDS="${TELEGRAM_ADMIN_IDS:-$(env_value TELEGRAM_ADMIN_IDS)}"
+  NOTIFY_NODE_STATUS="${NOTIFY_NODE_STATUS:-$(env_value NOTIFY_NODE_STATUS)}"
+  NODE_POLL_INTERVAL="${NODE_POLL_INTERVAL:-$(env_value NODE_POLL_INTERVAL)}"
+  ENFORCE_INTERVAL="${ENFORCE_INTERVAL:-$(env_value ENFORCE_INTERVAL)}"
+  NODE_TIMEOUT="${NODE_TIMEOUT:-$(env_value NODE_TIMEOUT)}"
+
+  OLD_PANEL_URL="$(env_value PANEL_URL)"
+  OLD_SUBSCRIPTION_URL="$(env_value SUBSCRIPTION_BASE_URL)"
+  OLD_ADMIN_USERNAME="$(env_value ADMIN_USERNAME)"
+  OLD_SUBSCRIPTION_PATH="$(env_value SUBSCRIPTION_PATH)"
+fi
+
+SECRET_KEY="${SECRET_KEY:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')}"
+SUBSCRIPTION_SECRET="${SUBSCRIPTION_SECRET:-}"
+SUBSCRIPTION_TITLE="${SUBSCRIPTION_TITLE:-NexloVPN}"
+SUBSCRIPTION_UPDATE_INTERVAL="${SUBSCRIPTION_UPDATE_INTERVAL:-12}"
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_ADMIN_IDS="${TELEGRAM_ADMIN_IDS:-}"
+NOTIFY_NODE_STATUS="${NOTIFY_NODE_STATUS:-true}"
+NODE_POLL_INTERVAL="${NODE_POLL_INTERVAL:-30}"
+ENFORCE_INTERVAL="${ENFORCE_INTERVAL:-60}"
+NODE_TIMEOUT="${NODE_TIMEOUT:-10}"
+APP_PORT="${APP_PORT:-8000}"
+
 echo "==> Ставим системные пакеты"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq python3 python3-venv python3-dev build-essential curl ca-certificates >/dev/null
 
 echo "==> Готовим базу данных"
-if [[ -z "${DATABASE_URL:-}" ]]; then
+if [[ -n "${DATABASE_URL:-}" ]]; then
+  echo "  используем уже настроенную базу"
+else
   apt-get install -y -qq postgresql >/dev/null
   # В контейнерах без systemd поднимаем кластер напрямую.
   if command -v systemctl >/dev/null && systemctl is-system-running --quiet 2>/dev/null; then
@@ -81,16 +136,21 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
 
   if ! su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='$DB_NAME'\"" | grep -q 1; then
     su postgres -c "createdb -O $DB_USER $DB_NAME"
+  else
+    echo "  база $DB_NAME уже существует — данные сохраняем"
   fi
 
   DATABASE_URL="postgresql://$DB_USER:$DB_PASSWORD@127.0.0.1:5432/$DB_NAME"
-  echo "  база $DB_NAME готова"
-else
-  echo "  используем внешнюю базу из DATABASE_URL"
 fi
 
 echo "==> Настройки панели"
 DEFAULT_ADDRESS="$(hostname -I 2>/dev/null | awk '{print $1}')"
+if [[ -n "${OLD_PANEL_URL:-}" ]]; then
+  # Предлагаем то, что уже настроено: адрес без схемы и без порта.
+  DEFAULT_ADDRESS="${OLD_PANEL_URL#*://}"
+  DEFAULT_ADDRESS="${DEFAULT_ADDRESS%%:*}"
+  [[ "$OLD_PANEL_URL" == https://* ]] && PANEL_SCHEME="${PANEL_SCHEME:-https}"
+fi
 ask PANEL_ADDRESS "Домен или IP панели" "${DEFAULT_ADDRESS:-localhost}"
 
 # Без домена сертификат взять неоткуда, поэтому для голого IP работаем по http
@@ -110,15 +170,18 @@ else
   PANEL_URL="https://${PANEL_ADDRESS}"
 fi
 
-ask SUBSCRIPTION_ADDRESS "Адрес в ссылках подписок" "$PANEL_URL"
-ask SUBSCRIPTION_PATH "Префикс пути подписки" "c"
-ask ADMIN_USERNAME "Логин администратора" "admin"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(12))')}"
+ask SUBSCRIPTION_ADDRESS "Адрес в ссылках подписок" "${OLD_SUBSCRIPTION_URL:-$PANEL_URL}"
+ask SUBSCRIPTION_PATH "Префикс пути подписки" "${OLD_SUBSCRIPTION_PATH:-c}"
+ask ADMIN_USERNAME "Логин администратора" "${OLD_ADMIN_USERNAME:-admin}"
 
 # Адрес подписок можно указать и без схемы — дополним сами.
 if [[ "$SUBSCRIPTION_ADDRESS" != http://* && "$SUBSCRIPTION_ADDRESS" != https://* ]]; then
   SUBSCRIPTION_ADDRESS="${PANEL_SCHEME}://${SUBSCRIPTION_ADDRESS}"
 fi
+
+# Пароль имеет смысл только для самого первого запуска: дальше он живёт
+# в базе, и переменная окружения на него уже не влияет.
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(12))')}"
 
 echo "==> Создаём окружение Python"
 if [[ ! -d "$INSTALL_DIR/.venv" ]]; then
@@ -128,13 +191,12 @@ fi
 "$INSTALL_DIR/.venv/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt"
 
 echo "==> Пишем .env"
-if [[ -f "$INSTALL_DIR/.env" ]]; then
-  cp "$INSTALL_DIR/.env" "$INSTALL_DIR/.env.bak.$(date +%s)"
+if [[ -f "$ENV_FILE" ]]; then
+  cp "$ENV_FILE" "$ENV_FILE.bak.$(date +%s)"
   echo "  прежний .env сохранён рядом с суффиксом .bak"
 fi
 
-SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
-cat > "$INSTALL_DIR/.env" <<EOF
+cat > "$ENV_FILE" <<EOF
 SECRET_KEY=${SECRET_KEY}
 PANEL_URL=${PANEL_URL}
 DEBUG=false
@@ -149,19 +211,28 @@ SUBSCRIPTION_PATH=${SUBSCRIPTION_PATH}
 # ВАЖНО: при переходе с Marzban сюда нужно вписать секрет из таблицы jwt
 # старой базы — его печатает scripts/migrate_from_marzban.py. Без этого
 # выданные ранее ссылки подписок перестанут открываться.
-SUBSCRIPTION_SECRET=
-SUBSCRIPTION_TITLE=NexloVPN
-SUBSCRIPTION_UPDATE_INTERVAL=12
+SUBSCRIPTION_SECRET=${SUBSCRIPTION_SECRET}
+SUBSCRIPTION_TITLE=${SUBSCRIPTION_TITLE}
+SUBSCRIPTION_UPDATE_INTERVAL=${SUBSCRIPTION_UPDATE_INTERVAL}
 
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_ADMIN_IDS=
-NOTIFY_NODE_STATUS=true
+TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS}
+NOTIFY_NODE_STATUS=${NOTIFY_NODE_STATUS}
 
-NODE_POLL_INTERVAL=30
-ENFORCE_INTERVAL=60
-NODE_TIMEOUT=10
+NODE_POLL_INTERVAL=${NODE_POLL_INTERVAL}
+ENFORCE_INTERVAL=${ENFORCE_INTERVAL}
+NODE_TIMEOUT=${NODE_TIMEOUT}
 EOF
-chmod 600 "$INSTALL_DIR/.env"
+chmod 600 "$ENV_FILE"
+
+# Есть ли уже администраторы: от этого зависит, что писать про пароль.
+# Переменная ADMIN_PASSWORD влияет только на первый запуск, поэтому печатать
+# сгенерированный пароль при обновлении нельзя — он не будет работать.
+ADMINS_EXIST=0
+ADMIN_LIST="$(cd "$INSTALL_DIR" && .venv/bin/python scripts/admin.py list 2>/dev/null || true)"
+if [[ -n "$ADMIN_LIST" && "$ADMIN_LIST" != *"Администраторов нет"* ]]; then
+  ADMINS_EXIST=1
+fi
 
 if [[ "${SKIP_SYSTEMD:-0}" != "1" ]]; then
   echo "==> Настраиваем systemd"
@@ -186,9 +257,19 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable --now "$SERVICE_NAME"
+  systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+  systemctl restart "$SERVICE_NAME"
   sleep 3
   systemctl --no-pager --lines=15 status "$SERVICE_NAME" || true
+fi
+
+if [[ "$ADMINS_EXIST" == "1" ]]; then
+  CREDENTIALS="Логин:     ${ADMIN_USERNAME} (пароль прежний, он хранится в базе)
+Забыли?    cd ${INSTALL_DIR} && .venv/bin/python scripts/admin.py set-password --username ${ADMIN_USERNAME}"
+else
+  CREDENTIALS="Логин:     ${ADMIN_USERNAME}
+Пароль:    ${ADMIN_PASSWORD}
+           (сохраните — второй раз он не покажется)"
 fi
 
 if [[ "$PANEL_SCHEME" == "http" ]]; then
@@ -206,6 +287,11 @@ else
   WARNING="Панель слушает 127.0.0.1:${APP_PORT} — наружу её пускает nginx."
 fi
 
+if [[ "$IS_UPGRADE" == "1" ]]; then
+  NEXT_STEPS="  Обновление завершено, настройки и данные на месте.
+  Изменить что-то ещё: nano ${ENV_FILE} && systemctl restart ${SERVICE_NAME}"
+fi
+
 cat <<EOF
 
 ======================================================================
@@ -213,9 +299,7 @@ cat <<EOF
 ${WARNING}
 
 Вход:      ${PANEL_URL}
-Логин:     ${ADMIN_USERNAME}
-Пароль:    ${ADMIN_PASSWORD}
-           (сохраните — второй раз он не покажется)
+${CREDENTIALS}
 
 Подписки:  ${SUBSCRIPTION_ADDRESS}/${SUBSCRIPTION_PATH}/<token>
 
