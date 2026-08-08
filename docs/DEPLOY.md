@@ -392,6 +392,7 @@ systemctl cat vpn-panel | grep WorkingDirectory
 | посмотреть, кто есть | `.venv/bin/python scripts/admin.py list` |
 | узнать команду установки агента | `.venv/bin/python scripts/node.py install` |
 | перевести панель на домен и HTTPS | `bash scripts/setup_domain.sh <домен>` |
+| «локально работает, из браузера нет» | `bash scripts/diagnose.sh` |
 | перевыпустить ключи, оставив данные | `REINSTALL=1 bash scripts/install_panel.sh` (см. предупреждение ниже) |
 | снести панель полностью | `bash scripts/uninstall_panel.sh` |
 
@@ -486,6 +487,38 @@ ufw allow from <IP панели> to any port 8443 proto tcp
 поле «Токен агента» должно совпадать с `AGENT_TOKEN` в
 `/opt/vpn-agent/agent.env` на сервере; после правки —
 `systemctl restart vpn-agent`.
+
+### Домен не открывается из браузера
+
+Сначала соберите картину одной командой — она проверит сервис, порты, nginx,
+сертификат, DNS и файрвол:
+
+```bash
+cd /opt/vpn-panel
+bash scripts/diagnose.sh
+```
+
+Если в отчёте всё зелёное, а браузер всё равно не открывает, смотрите на
+текст ошибки — он однозначно указывает на причину:
+
+| Что показывает браузер | Причина | Что делать |
+| --- | --- | --- |
+| `ERR_TOO_MANY_REDIRECTS` | Cloudflare в режиме Flexible ходит к серверу по http, а сервер редиректит на https | SSL/TLS → Overview → **Full (strict)** |
+| Ошибка **521/522** Cloudflare | Cloudflare не достучался до сервера: порт 443 закрыт | открыть 443 в файрволе хостера (в панели VPS, не только `ufw`) |
+| Ошибка **526** | Cloudflare в режиме Full (strict), а сертификат на сервере не выпустился | перевыпустить: `certbot --nginx -d <домен>` |
+| `ERR_NAME_NOT_RESOLVED` | запись ещё не разошлась или закешировалась у вас | `ipconfig /flushdns`, подождать несколько минут |
+| Таймаут без ответа | порт 443 закрыт, а домен идёт напрямую (серое облако) | открыть 443 у хостера |
+
+Проверить со своей машины (PowerShell):
+
+```powershell
+nslookup vixar.fun
+Test-NetConnection vixar.fun -Port 443
+curl.exe -v https://vixar.fun/healthz
+```
+
+`curl.exe -v` покажет, доходит ли соединение и кто отвечает — этого обычно
+достаточно, чтобы понять, чинить файрвол или настройки Cloudflare.
 
 ### Если что-то не встало
 
