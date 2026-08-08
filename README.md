@@ -172,6 +172,14 @@ AGENT_TOKEN=<токен из формы> PANEL_URL=https://panel.example.com bas
 Скрипт ставит Xray-core и агента, поднимает `systemd`-сервис `vpn-agent`.
 **Порт агента (8443) закройте файрволом для всех, кроме адреса панели.**
 
+Тот же скрипт обновляет агента после `git pull` в панели — токен указывать не
+нужно, он берётся из `/opt/vpn-agent/agent.env`, а Xray не переустанавливается:
+
+```bash
+curl -fsSL https://panel.example.com/install/install_agent.sh -o install_agent.sh
+PANEL_URL=https://panel.example.com bash install_agent.sh
+```
+
 **5. Проверить** на тестовом аккаунте: открыть его ссылку подписки, убедиться,
 что отдаются конфиги и соединение работает.
 

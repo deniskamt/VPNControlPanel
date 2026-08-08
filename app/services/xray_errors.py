@@ -25,8 +25,9 @@ HINTS: List[Tuple[str, str]] = [
     ),
     (
         r"failed to initialize access logger|no such file or directory.*access",
-        "Xray не может создать файл журнала — обновите агента на сервере "
-        "(curl … /install/agent.py) и перезапустите vpn-agent",
+        "Xray не может создать файл журнала — обновите агента на сервере: "
+        "команда есть на этой странице, кнопка «Установка» → блок "
+        "«Обновить уже установленного агента»",
     ),
     (
         r"certificate|tls: failed to find any PEM|cannot load|x509",

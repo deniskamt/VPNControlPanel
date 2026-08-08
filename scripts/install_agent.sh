@@ -3,11 +3,16 @@
 #
 #   AGENT_TOKEN=<токен из панели> PANEL_URL=https://panel.example.com bash install_agent.sh
 #
+# Этой же командой агент обновляется: скрипт видит, что он уже установлен,
+# переиспользует прежний токен и не качает Xray заново.
+#
 # Переменные:
-#   AGENT_TOKEN  (обяз.) — токен, который панель показывает в форме сервера
+#   AGENT_TOKEN  — токен из панели. При обновлении можно не указывать:
+#                  берётся из agent.env
 #   PANEL_URL    (обяз.) — адрес панели, откуда скачивается agent.py
 #   AGENT_PORT   — порт агента, по умолчанию 8443
 #   XRAY_VERSION — версия ядра, по умолчанию последняя
+#   XRAY_FORCE=1 — переустановить Xray, даже если он уже стоит
 
 set -euo pipefail
 
@@ -16,6 +21,23 @@ PANEL_URL="${PANEL_URL:-}"
 AGENT_PORT="${AGENT_PORT:-8443}"
 XRAY_VERSION="${XRAY_VERSION:-latest}"
 INSTALL_DIR="/opt/vpn-agent"
+ENV_FILE="$INSTALL_DIR/agent.env"
+
+# Что это — установка или обновление, решает наличие агента, а не Xray:
+# ядро может быть уже поставлено чужим скриптом.
+if [[ -f "$ENV_FILE" || -f "$INSTALL_DIR/agent.py" ]]; then
+  IS_UPDATE=1
+else
+  IS_UPDATE=0
+fi
+
+# Обновление не должно требовать бегать за токеном: он уже лежит на сервере.
+if [[ -z "$AGENT_TOKEN" && -f "$ENV_FILE" ]]; then
+  AGENT_TOKEN="$(sed -n 's/^AGENT_TOKEN=//p' "$ENV_FILE" | tail -1)"
+  AGENT_PORT="$(sed -n 's/^AGENT_PORT=//p' "$ENV_FILE" | tail -1)"
+  AGENT_PORT="${AGENT_PORT:-8443}"
+  [[ -n "$AGENT_TOKEN" ]] && echo "==> Обновление: токен взят из ${ENV_FILE}"
+fi
 
 if [[ -z "$AGENT_TOKEN" ]]; then
   echo "Не задан AGENT_TOKEN (возьмите его в панели при добавлении сервера)" >&2
@@ -42,6 +64,14 @@ else
   exit 1
 fi
 
+if [[ -x /usr/local/bin/xray && "${XRAY_FORCE:-0}" != "1" ]]; then
+  echo "==> Xray уже установлен ($(/usr/local/bin/xray version 2>/dev/null | head -1))"
+  echo "    пропускаем скачивание; XRAY_FORCE=1 — переустановить"
+  SKIP_XRAY=1
+else
+  SKIP_XRAY=0
+fi
+
 echo "==> Определяем архитектуру"
 case "$(uname -m)" in
   x86_64|amd64)  XRAY_ASSET="Xray-linux-64.zip" ;;
@@ -50,6 +80,7 @@ case "$(uname -m)" in
   *) echo "Неподдерживаемая архитектура: $(uname -m)" >&2; exit 1 ;;
 esac
 
+if [[ "$SKIP_XRAY" == "0" ]]; then
 echo "==> Ставим Xray-core ($XRAY_ASSET)"
 if [[ "$XRAY_VERSION" == "latest" ]]; then
   XRAY_URL="https://github.com/XTLS/Xray-core/releases/latest/download/${XRAY_ASSET}"
@@ -66,10 +97,28 @@ mkdir -p /usr/local/share/xray /usr/local/etc/xray
 for asset in geoip.dat geosite.dat; do
   [[ -f "$TMP_DIR/xray/$asset" ]] && install -m 644 "$TMP_DIR/xray/$asset" /usr/local/share/xray/
 done
+else
+  mkdir -p /usr/local/share/xray /usr/local/etc/xray
+fi
 
 echo "==> Ставим агента в $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
-curl -fsSL "${PANEL_URL%/}/install/agent.py" -o "$INSTALL_DIR/agent.py"
+# Скачиваем рядом и только потом подменяем: если панель ответит 502 (например,
+# её как раз перезапускают), рабочий агент останется на месте.
+NEW_AGENT="$INSTALL_DIR/agent.py.new"
+if ! curl -fsSL "${PANEL_URL%/}/install/agent.py" -o "$NEW_AGENT"; then
+  rm -f "$NEW_AGENT"
+  echo "Не удалось скачать agent.py с ${PANEL_URL%/}" >&2
+  echo "Проверьте, что панель отвечает: curl -I ${PANEL_URL%/}/healthz" >&2
+  [[ -f "$INSTALL_DIR/agent.py" ]] && echo "Прежний агент не тронут, он продолжает работать" >&2
+  exit 1
+fi
+if ! grep -q "class XrayProcess" "$NEW_AGENT"; then
+  rm -f "$NEW_AGENT"
+  echo "По адресу ${PANEL_URL%/}/install/agent.py лежит не агент (похоже на страницу ошибки)" >&2
+  exit 1
+fi
+mv "$NEW_AGENT" "$INSTALL_DIR/agent.py"
 
 if [[ ! -d "$INSTALL_DIR/venv" ]]; then
   python3 -m venv "$INSTALL_DIR/venv"
@@ -118,11 +167,22 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now vpn-agent
+systemctl enable vpn-agent >/dev/null 2>&1 || true
+# Именно restart, а не enable --now: при обновлении уже запущенный сервис
+# от --now не перезапустится и продолжит работать на прежнем agent.py.
+systemctl restart vpn-agent
 sleep 2
 systemctl --no-pager --lines=10 status vpn-agent || true
 
-cat <<EOF
+if [[ "$IS_UPDATE" == "1" ]]; then
+  cat <<EOF
+
+==> Агент обновлён и перезапущен. Порт ${AGENT_PORT}, токен не менялся.
+Xray: $(/usr/local/bin/xray version 2>/dev/null | head -1)
+Логи агента:  journalctl -u vpn-agent -f
+EOF
+else
+  cat <<EOF
 
 ==> Готово.
 Агент слушает порт ${AGENT_PORT}.
@@ -133,3 +193,4 @@ cat <<EOF
 
 Логи агента:  journalctl -u vpn-agent -f
 EOF
+fi
