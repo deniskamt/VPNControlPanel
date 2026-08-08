@@ -16,6 +16,7 @@ from app.models.enums import DataLimitResetStrategy, ProxyType, UserStatus
 from app.models.inbound import Inbound
 from app.models.node import Node
 from app.models.user import User, UserProxy
+from app.services.client_config import build_user_profiles
 from app.services.links import build_user_links
 from app.services.subscription import create_subscription_token
 
@@ -195,6 +196,14 @@ async def user_links(session: AsyncSession, user: User) -> List[str]:
         select(Node).where(Node.is_enabled.is_(True)).order_by(Node.sort_order, Node.id)
     )
     return build_user_links(user, list(result.scalars().all()))
+
+
+async def user_profiles(session: AsyncSession, user: User) -> List[Dict[str, Any]]:
+    """Готовые конфиги Xray для JSON-подписки."""
+    result = await session.execute(
+        select(Node).where(Node.is_enabled.is_(True)).order_by(Node.sort_order, Node.id)
+    )
+    return build_user_profiles(user, list(result.scalars().all()))
 
 
 async def usernames_by_ids(

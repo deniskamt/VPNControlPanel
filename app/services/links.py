@@ -15,7 +15,7 @@ from app.models.enums import NetworkType, ProxyType, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.models.user import User
-from app.services import shadowsocks
+from app.services import shadowsocks, xhttp
 from app.services.flags import country_flag
 
 
@@ -134,6 +134,13 @@ def build_link(
     """Одна ссылка для пары (нода, inbound). None — если у юзера нет ключа."""
     creds = user.proxy_settings(inbound.protocol)
     if creds is None:
+        return None
+
+    # Маскировочные параметры XHTTP в ссылку не помещаются: общепринятых
+    # query-параметров для них нет. Клиент взял бы значения по умолчанию и
+    # не соединился, поэтому такое подключение отдаётся только JSON-подпиской,
+    # а нерабочую ссылку не выдаём вовсе.
+    if inbound.network == NetworkType.xhttp and xhttp.has_obfuscation(inbound.settings or {}):
         return None
 
     address = (host.address if host and host.address else None) or node.address

@@ -91,7 +91,8 @@ def test_xhttp_reality_preset_is_the_first_offer():
     assert first.security == SecurityType.reality
 
     settings = preset_service.build_settings(first, masking_domain="www.microsoft.com")
-    assert settings["mode"] == "auto"
+    # stream-one, а не auto: замер на живом ядре дал ~78 против ~60 МБ/с.
+    assert settings["mode"] == "stream-one"
     assert settings["path"].startswith("/")
     assert settings["privateKey"] and settings["publicKey"]
     # Vision живёт только на TCP: на xhttp он ломает клиента.
@@ -103,7 +104,8 @@ def test_cdn_preset_keeps_the_domain_for_the_client():
     settings = preset_service.build_settings(preset, sni="cdn.example.com")
 
     assert settings["host"] == "cdn.example.com"
-    assert settings["mode"] == "auto"
+    # За CDN длинный ответ часто режут, поэтому здесь нужен packet-up.
+    assert settings["mode"] == "packet-up"
     assert "privateKey" not in settings  # TLS терминирует CDN, REALITY тут нет
 
 

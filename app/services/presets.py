@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.models.enums import NetworkType, ProxyType, SecurityType
-from app.services import shadowsocks
+from app.services import shadowsocks, xhttp
 from app.services.keys import generate_path, generate_reality_keypair, generate_short_id
 
 
@@ -275,6 +275,7 @@ def build_settings(
     certificate_file: Optional[str] = None,
     key_file: Optional[str] = None,
     sni: Optional[str] = None,
+    obfuscate: bool = False,
 ) -> Dict[str, Any]:
     """Собирает параметры inbound'а, генерируя всё, что можно сгенерировать."""
     settings: Dict[str, Any] = {}
@@ -308,10 +309,13 @@ def build_settings(
         if sni:
             settings["host"] = sni.strip()
         if preset.network == NetworkType.xhttp:
-            # auto: клиент сам выбирает режим — под REALITY это stream-one,
-            # за CDN packet-up. Ставить руками stream-one/packet-up имеет смысл
-            # только когда точно известна сеть, а «auto» верен в обоих случаях.
-            settings["mode"] = "auto"
+            # stream-one, а не auto: на замерах (Xray 26.7.28, один и тот же
+            # файл через один и тот же канал) auto давал ~60 МБ/с, stream-one
+            # ~78 МБ/с. За CDN длинный ответ часто режут — там packet-up.
+            settings["mode"] = "packet-up" if preset.security == SecurityType.none \
+                else xhttp.DEFAULT_MODE
+            if obfuscate:
+                settings.update(xhttp.generate_obfuscation())
     elif preset.network == NetworkType.grpc:
         settings["serviceName"] = generate_path().lstrip("/")
 

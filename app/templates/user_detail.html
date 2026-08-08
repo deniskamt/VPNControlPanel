@@ -132,6 +132,17 @@
           В v2rayNG, NekoBox или Hiddify её добавляют как <b>подписку</b>, а не как
           отдельный сервер: тогда список серверов обновляется сам.
         </p>
+        <label style="margin-top:12px">JSON-подписка</label>
+        <div class="copy-field">
+          <input type="text" class="mono" readonly id="sub-json"
+                 value="{{ subscription_url }}?format=json">
+          <button class="small" data-copy="#sub-json">Копировать</button>
+        </div>
+        <p class="muted" style="margin-top:6px">
+          Та же подписка, но конфигами целиком. Нужна для подключений с
+          усиленной маскировкой: их параметры в обычную ссылку не помещаются.
+          Понимают v2rayTun, Happ, v2rayNG, Streisand, NekoBox.
+        </p>
         <p class="muted">
           Ссылка переживает продление и смену серверов — меняется только при отзыве.
           QR-код можно просто отсканировать камерой приложения.

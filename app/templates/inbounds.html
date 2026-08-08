@@ -157,6 +157,24 @@
         </div>
       </div>
 
+      <div class="form-row" style="margin-top:4px">
+        <label class="check-line">
+          <input type="checkbox" name="obfuscate" value="1">
+          Усиленная маскировка XHTTP
+        </label>
+        <p class="muted" style="margin:6px 0 0">
+          Прячет служебные поля в обычных заголовках и query-параметрах и
+          добивает запросы до случайной длины. Набор имён у каждого
+          подключения свой — одинаковые на всех серверах значения сами по себе
+          становятся приметой. Работает только для шаблонов на XHTTP.
+          <b>Важно:</b> такие параметры не помещаются в обычную ссылку
+          <span class="mono">vless://</span>, поэтому подключение уедет
+          пользователю только JSON-подпиской (ссылка есть в карточке
+          пользователя). Клиент должен уметь JSON-подписку: v2rayTun, Happ,
+          v2rayNG, Streisand, NekoBox.
+        </p>
+      </div>
+
       <details class="editor" style="margin:12px 0; border-top:none">
         <summary>Сертификат — если выбран шаблон с TLS</summary>
         <div class="form-grid" style="padding-top:8px">

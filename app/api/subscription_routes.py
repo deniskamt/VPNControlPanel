@@ -106,6 +106,12 @@ async def subscription(
     options = await settings_store.get_all(session)
     await _touch(session, user, request)
 
+    if fmt == "json":
+        # Подключения с усиленной маскировкой живут только здесь: обычная
+        # ссылка их параметры передать не умеет.
+        profiles = await user_service.user_profiles(session, user)
+        return JSONResponse(profiles, headers=_headers(user, options))
+
     body = "\n".join(links)
     if fmt == "plain":
         return PlainTextResponse(body, headers=_headers(user, options))

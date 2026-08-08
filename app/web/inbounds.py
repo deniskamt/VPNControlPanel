@@ -111,6 +111,7 @@ async def quick_create(
     sni: str = Form(default=""),
     certificate_file: str = Form(default=""),
     key_file: str = Form(default=""),
+    obfuscate: bool = Form(default=False),
     node_ids: List[int] = Form(default=[]),
     session: AsyncSession = Depends(get_session),
     admin: Admin = Depends(web_admin),
@@ -139,6 +140,7 @@ async def quick_create(
             certificate_file=certificate_file,
             key_file=key_file,
             sni=sni,
+            obfuscate=obfuscate,
         ),
     )
 

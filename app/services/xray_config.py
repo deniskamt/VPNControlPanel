@@ -15,7 +15,7 @@ from app.models.enums import NetworkType, ProxyType, SecurityType, UserStatus
 from app.models.inbound import Inbound
 from app.models.node import Node
 from app.models.user import User
-from app.services import shadowsocks
+from app.services import shadowsocks, xhttp
 
 API_PORT = 10085
 API_TAG = "api"
@@ -42,11 +42,7 @@ def _stream_settings(inbound: Inbound) -> Dict[str, Any]:
             "host": opts.get("host", ""),
         }
     elif inbound.network == NetworkType.xhttp:
-        stream["xhttpSettings"] = {
-            "path": opts.get("path", "/"),
-            "host": opts.get("host", ""),
-            "mode": opts.get("mode", "auto"),
-        }
+        stream["xhttpSettings"] = xhttp.transport_settings(opts)
     elif inbound.network == NetworkType.tcp and opts.get("header_type") == "http":
         stream["tcpSettings"] = {
             "header": {
