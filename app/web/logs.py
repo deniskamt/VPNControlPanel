@@ -1,6 +1,6 @@
 """Журнал действий и страница настроек/уведомлений."""
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,8 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.admin import Admin
 from app.models.audit import AuditLog
-from app.services import notifier
+from app.services import notifier, settings_store
+from app.services.audit import log_action
 from app.web.templates import templates
 
 router = APIRouter()
@@ -66,8 +67,10 @@ async def logs(
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(
     request: Request,
+    session: AsyncSession = Depends(get_session),
     admin: Admin = Depends(web_admin),
     sent: bool = Query(default=False),
+    saved: bool = Query(default=False),
 ):
     return templates.TemplateResponse(
         request,
@@ -76,9 +79,50 @@ async def settings_page(
             "admin": admin,
             "page": "settings",
             "settings": settings,
+            "options": await settings_store.get_all(session),
             "sent": sent,
+            "saved": saved,
         },
     )
+
+
+@router.post("/settings/subscription")
+async def save_subscription_settings(
+    request: Request,
+    subscription_title: str = Form(default=""),
+    subscription_update_interval: str = Form(default="12"),
+    announce: str = Form(default=""),
+    announce_url: str = Form(default=""),
+    support_url: str = Form(default=""),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Оформление подписки в клиентских приложениях."""
+    interval = subscription_update_interval.strip()
+    if not interval.isdigit() or not 1 <= int(interval) <= 168:
+        interval = "12"
+
+    await settings_store.save(
+        session,
+        {
+            "subscription_title": subscription_title.strip(),
+            "subscription_update_interval": interval,
+            # Переносы строк оставляем: из них состоит текст объявления.
+            "announce": announce.replace("\r\n", "\n").strip(),
+            "announce_url": announce_url.strip(),
+            "support_url": support_url.strip(),
+        },
+    )
+    await log_action(
+        session,
+        action="settings.subscription",
+        actor=admin.username,
+        message="изменено оформление подписки",
+        ip=request.client.host if request.client else None,
+    )
+    await session.commit()
+
+    return RedirectResponse("/settings?saved=1", status_code=303)
 
 
 @router.post("/settings/test-telegram")

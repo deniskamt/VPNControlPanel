@@ -10,7 +10,58 @@
 </div>
 
 <div class="panel">
-  <header>Подписки</header>
+  <header>
+    Как подписка выглядит в приложении
+    {% if saved %}<span class="badge ok">сохранено</span>{% endif %}
+  </header>
+  <div class="body">
+    <div class="hint-box" style="margin-bottom:14px">
+      Эти поля уезжают клиенту заголовками ответа подписки. Так v2rayTun,
+      Hiddify и подобные приложения показывают название профиля, объявление
+      и кнопку поддержки. Менять можно на ходу — перезапуск не нужен,
+      изменения увидят все, кто обновит подписку.
+    </div>
+
+    <form method="post" action="/settings/subscription">
+      <div class="form-grid">
+        <div>
+          <label>Название профиля</label>
+          <input type="text" name="subscription_title"
+                 value="{{ options.subscription_title }}" placeholder="NexloVPN">
+        </div>
+        <div>
+          <label>Обновлять подписку каждые, часов</label>
+          <input type="number" name="subscription_update_interval" min="1" max="168"
+                 value="{{ options.subscription_update_interval }}">
+        </div>
+        <div>
+          <label>Ссылка поддержки <span class="muted">(кнопка в приложении)</span></label>
+          <input type="text" name="support_url" value="{{ options.support_url }}"
+                 placeholder="https://t.me/ваш_бот">
+        </div>
+        <div>
+          <label>Ссылка по клику на объявление</label>
+          <input type="text" name="announce_url" value="{{ options.announce_url }}"
+                 placeholder="необязательно">
+        </div>
+      </div>
+
+      <div class="form-row" style="margin-top:12px">
+        <label>
+          Объявление — текст под названием профиля.
+          Переносы строк и эмодзи работают
+        </label>
+        <textarea name="announce" rows="7" spellcheck="false"
+                  placeholder="⚡ Поддержка: @ваш_бот&#10;🌐 Сайт: example.com&#10;&#10;🛠 Не работает VPN — нажмите обновить или смените локацию">{{ options.announce }}</textarea>
+      </div>
+
+      <button type="submit" class="primary">Сохранить</button>
+    </form>
+  </div>
+</div>
+
+<div class="panel">
+  <header>Адреса подписок</header>
   <div class="table-wrap">
     <table>
       <tbody>

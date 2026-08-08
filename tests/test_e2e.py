@@ -305,3 +305,50 @@ def test_user_page_shows_qr_and_links(client, auth):
     assert detail.status_code == 200
     assert 'class="segno"' in detail.text  # инлайновый SVG с QR
     assert "vless://" in detail.text
+
+
+def test_subscription_headers_carry_announce_and_support(client, auth, inbound):
+    """Оформление профиля уезжает клиенту заголовками ответа подписки."""
+    from base64 import b64decode
+
+    saved = client.post(
+        "/settings/subscription",
+        data={
+            "subscription_title": "МойVPN",
+            "subscription_update_interval": "6",
+            "support_url": "https://t.me/support_bot",
+            "announce_url": "https://example.com/news",
+            "announce": "Первая строка\nВторая строка",
+        },
+        follow_redirects=False,
+    )
+    assert saved.status_code == 303
+
+    user = client.get("/api/user/user_12345", headers=auth).json()
+    path = user["subscription_url"].replace("https://vpn.example.com", "")
+    response = client.get(path, headers={"User-Agent": "v2rayTun/5.0"})
+
+    assert response.status_code == 200
+    # Кириллица и переносы строк в заголовок иначе не помещаются.
+    assert b64decode(response.headers["profile-title"][len("base64:"):]).decode() == "МойVPN"
+    announce = b64decode(response.headers["announce"][len("base64:"):]).decode()
+    assert announce == "Первая строка\nВторая строка"
+    assert response.headers["support-url"] == "https://t.me/support_bot"
+    assert response.headers["announce-url"] == "https://example.com/news"
+    assert response.headers["profile-update-interval"] == "6"
+
+
+def test_empty_announce_is_not_sent(client, auth, inbound):
+    """Пустое объявление не должно превращаться в пустую плашку в приложении."""
+    client.post(
+        "/settings/subscription",
+        data={"subscription_title": "VPN", "subscription_update_interval": "12",
+              "announce": "", "announce_url": "", "support_url": ""},
+        follow_redirects=False,
+    )
+    user = client.get("/api/user/user_12345", headers=auth).json()
+    path = user["subscription_url"].replace("https://vpn.example.com", "")
+    response = client.get(path)
+
+    assert "announce" not in response.headers
+    assert "support-url" not in response.headers

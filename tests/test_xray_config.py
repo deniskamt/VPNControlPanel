@@ -144,7 +144,9 @@ def test_reality_link_carries_public_key_not_private():
     assert "PRIVATE" not in link
     assert "sid=ab12" in link
     assert "flow=xtls-rprx-vision" in link
-    assert link.endswith("#NL-1")
+    # Название по умолчанию начинается с флага страны — по нему клиент рисует
+    # иконку (🇳🇱 в процентной кодировке).
+    assert link.endswith("#%F0%9F%87%B3%F0%9F%87%B1%20NL-1")
 
 
 def test_ws_link_has_no_flow():
@@ -312,3 +314,21 @@ def test_shadowsocks_2022_keys_differ_from_plain():
     userinfo = b64decode(link[len("ss://"):].split("@")[0] + "==").decode()
     assert userinfo.count(":") == 2
     assert userinfo.startswith("2022-blake3-aes-128-gcm:")
+
+
+def test_link_name_starts_with_flag():
+    """Название конфигурации должно начинаться с эмодзи флага."""
+    from urllib.parse import unquote
+
+    inbound = make_inbound()
+    link = build_link(make_user([inbound]), inbound, make_node([inbound], country="SE"))
+    remark = unquote(link.split("#", 1)[1])
+
+    assert remark == "🇸🇪 NL-1"
+
+
+def test_link_name_without_country_has_no_stray_spaces():
+    inbound = make_inbound()
+    link = build_link(make_user([inbound]), inbound, make_node([inbound], country=None))
+
+    assert link.endswith("#NL-1")

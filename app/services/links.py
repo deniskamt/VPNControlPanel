@@ -16,18 +16,26 @@ from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.models.user import User
 from app.services import shadowsocks
+from app.services.flags import country_flag
+
+
+# Название по умолчанию: флаг впереди, потому что клиентские приложения
+# рисуют иконку страны только по эмодзи в названии, а не по нашему полю.
+DEFAULT_REMARK = "{flag} {node}"
 
 
 def _remark(template: str, node: Node, user: User, inbound: Inbound) -> str:
-    return (
-        (template or "{node}")
+    result = (
+        (template or DEFAULT_REMARK)
+        .replace("{flag}", country_flag(node.country))
         .replace("{node}", node.name)
         .replace("{country}", node.country or "")
         .replace("{username}", user.username)
         .replace("{protocol}", inbound.protocol.value)
         .replace("{tag}", inbound.tag)
-        .strip()
-    ) or node.name
+    )
+    # Без страны шаблон оставил бы лишние пробелы в начале названия.
+    return " ".join(result.split()) or node.name
 
 
 def _b64(value: str) -> str:
@@ -130,7 +138,7 @@ def build_link(
 
     address = (host.address if host and host.address else None) or node.address
     port = (host.port if host and host.port else None) or inbound.port
-    remark = _remark(host.remark if host else "{node}", node, user, inbound)
+    remark = _remark(host.remark if host else DEFAULT_REMARK, node, user, inbound)
     opts = inbound.settings or {}
 
     if inbound.protocol == ProxyType.shadowsocks:

@@ -27,8 +27,9 @@
              {% if not node %}required{% endif %}>
     </div>
     <div>
-      <label>Страна / метка</label>
-      <input type="text" name="country" value="{{ node.country or '' if node else '' }}" placeholder="NL">
+      <label>Страна <span class="muted">(код из двух букв — станет флагом)</span></label>
+      <input type="text" name="country" value="{{ node.country or '' if node else '' }}"
+             placeholder="SE" maxlength="32">
     </div>
     <div>
       <label>Коэффициент трафика</label>

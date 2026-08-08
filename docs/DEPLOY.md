@@ -393,6 +393,7 @@ systemctl cat vpn-panel | grep WorkingDirectory
 | узнать команду установки агента | `.venv/bin/python scripts/node.py install` |
 | перевести панель на домен и HTTPS | `bash scripts/setup_domain.sh <домен>` |
 | «локально работает, из браузера нет» | `bash scripts/diagnose.sh` |
+| оформление подписки в приложении | «Настройки» → «Как подписка выглядит в приложении» |
 | перевыпустить ключи, оставив данные | `REINSTALL=1 bash scripts/install_panel.sh` (см. предупреждение ниже) |
 | снести панель полностью | `bash scripts/uninstall_panel.sh` |
 

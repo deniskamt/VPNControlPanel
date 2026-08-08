@@ -12,6 +12,7 @@ from app.models.enums import (
 )
 from app.models.inbound import Host, Inbound
 from app.models.node import Node, node_inbounds
+from app.models.setting import Setting
 from app.models.usage import NodeUsage, NodeUserUsage, SystemUsage
 from app.models.user import User, UserProxy, user_inbounds
 
@@ -24,6 +25,7 @@ __all__ = [
     "Node",
     "NodeUsage",
     "NodeUserUsage",
+    "Setting",
     "SystemUsage",
     "User",
     "UserNodeAccess",
