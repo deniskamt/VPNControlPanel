@@ -210,6 +210,32 @@ systemctl status vpn-panel
 
 ## Nginx и сертификат
 
+Одной командой:
+
+```bash
+cd /opt/vpn-panel
+bash scripts/setup_domain.sh vixar.fun --email you@example.com
+```
+
+Скрипт проверит, что порт 443 свободен и домен указывает на этот сервер,
+поставит nginx и certbot, получит сертификат, пропишет https-адреса в `.env`
+и уберёт панель с внешнего интерфейса — снаружи останется только nginx.
+Домен подписок задаётся отдельно: `--sub nexlovpn.online`.
+
+**Порт 443 придётся делить.** Если панель и VPN на одной машине, оба не могут
+слушать 443. Скрипт это заметит и остановится. Обычно проще перенести
+подключение на другой порт («Подключения» → «Настроить» → порт 8443):
+ссылки у пользователей обновятся сами при следующем обновлении подписки.
+
+**Cloudflare.** На время выпуска сертификата запись домена должна стоять в
+режиме **DNS only** (серое облако) — с проксированием certbot часто не
+проходит. После выпуска оранжевое облако можно вернуть, но режим SSL/TLS
+обязательно **Full (strict)**, иначе получится цикл редиректов.
+Адрес VPN-серверов через Cloudflare не проксируется никогда: для нод
+используйте IP или отдельную запись с серым облаком.
+
+### Вручную
+
 ```bash
 cat > /etc/nginx/sites-available/vpn-panel <<'EOF'
 server {
@@ -365,6 +391,7 @@ systemctl cat vpn-panel | grep WorkingDirectory
 | завести второго администратора | `.venv/bin/python scripts/admin.py set-password --username operator` |
 | посмотреть, кто есть | `.venv/bin/python scripts/admin.py list` |
 | узнать команду установки агента | `.venv/bin/python scripts/node.py install` |
+| перевести панель на домен и HTTPS | `bash scripts/setup_domain.sh <домен>` |
 | перевыпустить ключи, оставив данные | `REINSTALL=1 bash scripts/install_panel.sh` (см. предупреждение ниже) |
 | снести панель полностью | `bash scripts/uninstall_panel.sh` |
 
