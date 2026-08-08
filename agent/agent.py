@@ -24,6 +24,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -31,6 +32,10 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 import uvicorn
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
+
+# Версия агента. Увеличивается при каждом изменении этого файла: панель
+# сравнивает её со своей и показывает, на каких нодах агент устарел.
+AGENT_VERSION = 2
 
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")
 AGENT_HOST = os.getenv("AGENT_HOST", "0.0.0.0")
@@ -224,6 +229,7 @@ def system_uptime() -> int:
 def health() -> Dict[str, Any]:
     return {
         "ok": xray.running,
+        "agent_version": AGENT_VERSION,
         "xray_running": xray.running,
         "xray_version": xray.version(),
         "config_hash": xray.config_hash,
@@ -290,6 +296,55 @@ def apply_config(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
 def restart() -> Dict[str, Any]:
     xray.restart()
     return {"ok": xray.running, "error": xray.last_error}
+
+
+def _exit_for_restart() -> None:
+    """Выйти, чтобы systemd поднял агента с новым кодом."""
+    time.sleep(1.0)  # успеть отдать ответ панели
+    xray.stop()
+    # os._exit, а не sys.exit: мы в отдельном потоке, обычный выход его не
+    # завершит процесс. Restart=always в юните поднимет агента заново.
+    os._exit(0)
+
+
+@app.post("/update", dependencies=[Depends(require_token)])
+def update(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Заменить собственный код на присланный панелью и перезапуститься.
+
+    Обновлять агента руками через ssh на каждой ноде — то, из-за чего он
+    месяцами остаётся старым, а панель получает бесполезные сообщения об
+    ошибках. Код приходит от панели, с которой агент и так связан токеном,
+    так что отдельного канала доверия здесь не появляется.
+    """
+    source = payload.get("source")
+    if not isinstance(source, str) or not source.strip():
+        raise HTTPException(400, "Ожидается поле source с кодом агента")
+
+    # Две проверки перед подменой: это действительно агент и он хотя бы
+    # компилируется. Записать сюда обрывок файла — значит потерять ноду.
+    if "class XrayProcess" not in source:
+        raise HTTPException(400, "Присланный код не похож на агента")
+    try:
+        compile(source, "agent.py", "exec")
+    except SyntaxError as exc:
+        raise HTTPException(400, f"Присланный код не компилируется: {exc}")
+
+    target = Path(__file__).resolve()
+    try:
+        backup = target.with_suffix(".py.bak")
+        backup.write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
+        target.write_text(source, encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(500, f"не удалось записать {target}: {exc}")
+
+    threading.Thread(target=_exit_for_restart, daemon=True).start()
+    return {
+        "ok": True,
+        "previous_version": AGENT_VERSION,
+        "version": payload.get("version"),
+        "path": str(target),
+        "restarting": True,
+    }
 
 
 def _query_stats(reset: bool) -> Dict[str, int]:

@@ -130,7 +130,12 @@
             <span class="badge warn">подключение</span>
           {% endif %}
         </td>
-        <td class="mono">{{ node.xray_version or '—' }}</td>
+        <td class="mono">
+          {{ node.xray_version or '—' }}
+          {% if agent_outdated[node.id] and node.last_seen_at %}
+            <div><span class="badge warn" title="Агент версии {{ node.agent_version or '?' }}, в панели {{ agent_version }}">агент устарел</span></div>
+          {% endif %}
+        </td>
         <td>{% if node.cpu_percent is not none %}{{ node.cpu_percent }}% / {{ node.mem_percent }}%{% else %}<span class="muted">—</span>{% endif %}</td>
         <td>{{ (node.uplink + node.downlink) | bytes }}</td>
         <td>{{ node.inbounds | length }}</td>
@@ -145,6 +150,10 @@
             </form>
             <form class="inline" method="post" action="/nodes/{{ node.id }}/restart">
               <button class="small" type="submit">Перезапустить</button>
+            </form>
+            <form class="inline" method="post" action="/nodes/{{ node.id }}/update-agent"
+                  data-confirm="Обновить агента на {{ node.name }} до версии {{ agent_version }}? Xray перезапустится, подключения оборвутся на несколько секунд.">
+              <button class="small {{ 'primary' if agent_outdated[node.id] else '' }}" type="submit">Обновить агента</button>
             </form>
             <form class="inline" method="post" action="/nodes/{{ node.id }}/toggle">
               <button class="small" type="submit">{{ 'Выключить' if node.is_enabled else 'Включить' }}</button>

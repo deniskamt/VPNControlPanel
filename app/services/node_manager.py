@@ -312,6 +312,9 @@ async def poll_node(session: AsyncSession, node: Node) -> None:
 
     node.last_seen_at = datetime.utcnow()
     node.xray_version = health.get("xray_version") or node.xray_version
+    # Агенты до появления самообновления версию не сообщают — тогда 0,
+    # и панель покажет, что агента надо обновить.
+    node.agent_version = int(health.get("agent_version") or 0)
     node.cpu_percent = health.get("cpu_percent")
     node.mem_percent = health.get("mem_percent")
     node.uptime_seconds = health.get("uptime")

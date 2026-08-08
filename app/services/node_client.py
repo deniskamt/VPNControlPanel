@@ -49,7 +49,9 @@ class NodeClient:
             )
         return f"нет связи с агентом ({host}): {message}"
 
-    async def _request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
+    async def _request(
+        self, method: str, path: str, missing_hint: str | None = None, **kwargs
+    ) -> Dict[str, Any]:
         headers = {"Authorization": f"Bearer {self.token}"}
         try:
             async with httpx.AsyncClient(
@@ -69,7 +71,8 @@ class NodeClient:
             )
         if response.status_code == 404:
             raise NodeError(
-                f"на {self.base_url} отвечает не агент панели, а что-то другое — "
+                missing_hint
+                or f"на {self.base_url} отвечает не агент панели, а что-то другое — "
                 "проверьте порт"
             )
         if response.status_code >= 400:
@@ -106,3 +109,19 @@ class NodeClient:
 
     async def restart(self) -> Dict[str, Any]:
         return await self._request("POST", "/restart", timeout=max(self.timeout, 30))
+
+    async def update_agent(self, source: str, version: int) -> Dict[str, Any]:
+        """Прислать агенту его новый код — он запишет его и перезапустится."""
+        return await self._request(
+            "POST",
+            "/update",
+            json={"source": source, "version": version},
+            timeout=max(self.timeout, 30),
+            # Агенты, поставленные до появления самообновления, этой ручки не
+            # знают, и «проверьте порт» тут только запутает.
+            missing_hint=(
+                "агент на этой ноде слишком старый и не умеет обновляться сам. "
+                "Обновите его один раз командой из блока «Установка», дальше "
+                "будет работать кнопка"
+            ),
+        )

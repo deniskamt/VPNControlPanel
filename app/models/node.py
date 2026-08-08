@@ -53,6 +53,8 @@ class Node(Base, TimestampMixin):
     )
     message: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     xray_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # Версия агента с последнего опроса: по ней видно, где он устарел.
+    agent_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     last_status_change: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
     )

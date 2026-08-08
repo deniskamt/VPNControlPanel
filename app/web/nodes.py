@@ -15,6 +15,7 @@ from app.models.admin import Admin
 from app.models.enums import NodeStatus
 from app.models.inbound import Inbound
 from app.models.node import Node
+from app.services.agent_source import bundled_version, is_outdated, read_source
 from app.services.audit import log_action
 from app.services.flags import country_options
 from app.services.keys import generate_agent_token
@@ -51,6 +52,7 @@ async def list_nodes(
     inbounds = list(
         (await session.execute(select(Inbound).order_by(Inbound.id))).scalars().all()
     )
+    agent_version = bundled_version()
     return templates.TemplateResponse(
         request,
         "nodes.html",
@@ -66,6 +68,11 @@ async def list_nodes(
             },
             "new_country_options": country_options(),
             "panel_url": settings.PANEL_URL,
+            "agent_version": agent_version,
+            "agent_outdated": {
+                node.id: is_outdated(node.agent_version, agent_version)
+                for node in nodes
+            },
             "NodeStatus": NodeStatus,
         },
     )
@@ -240,6 +247,56 @@ async def restart_node(
         commit=True,
     )
     await poll_node(session, node)
+    return _redirect()
+
+
+@router.post("/{node_id}/update-agent")
+async def update_agent(
+    node_id: int,
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Разослать ноде свежий код агента.
+
+    Ходить по серверам с ssh после каждого обновления панели — верный способ
+    оставить на нодах старого агента. Канал к агенту уже есть, код лежит
+    рядом с панелью, так что обновление — это одна кнопка.
+    """
+    node = await _get_node(session, node_id)
+    source = read_source()
+    version = bundled_version(source)
+
+    try:
+        await NodeClient(node).update_agent(source, version)
+        message: Optional[str] = f"агент обновлён до версии {version}"
+        level = "info"
+    except NodeError as exc:
+        message = str(exc)
+        level = "error"
+
+    await log_action(
+        session,
+        action="node.update_agent",
+        actor=admin.username,
+        target=node.name,
+        target_type="node",
+        message=message,
+        level=level,
+        commit=True,
+    )
+
+    if level == "error":
+        node.status = NodeStatus.error
+        node.message = message
+        await session.commit()
+    else:
+        # Агент выйдет и поднимется через systemd — на это нужно несколько
+        # секунд, и до них опрашивать его бессмысленно.
+        node.agent_version = version
+        node.status = NodeStatus.connecting
+        node.message = None
+        await session.commit()
+
     return _redirect()
 
 
