@@ -228,6 +228,10 @@ def build_node_config(node: Node, users: Iterable[User]) -> Dict[str, Any]:
                 "0": {
                     "statsUserUplink": True,
                     "statsUserDownlink": True,
+                    # Список адресов пользователя ядро ведёт само — по нему
+                    # считаются устройства. Access-лог для этого не годится:
+                    # свежие сборки Xray в него ничего не пишут.
+                    "statsUserOnline": True,
                 }
             },
             "system": {

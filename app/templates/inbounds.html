@@ -49,7 +49,10 @@
   </div>
 
   <div class="form-row">
-    <label>Поднять на серверах</label>
+    <label>
+      Поднять на серверах
+      {% if not inbound %}<span class="muted">(ничего не отмечено — поднимем на всех)</span>{% endif %}
+    </label>
     {% if nodes %}
       <div class="checks">
         {% for node in nodes %}
@@ -92,14 +95,14 @@
 
     <form method="post" action="/inbounds/quick">
       <div class="preset-grid">
-        {% for preset in presets %}
+        {% for preset in current_presets %}
           <label class="preset">
             <input type="radio" name="preset" value="{{ preset.key }}"
-                   {% if preset.recommended %}checked{% endif %} required>
+                   {% if loop.first %}checked{% endif %} required>
             <span class="preset-body">
               <span class="preset-title">
                 {{ preset.title }}
-                {% if preset.recommended %}<span class="tag">рекомендуется</span>{% endif %}
+                {% if loop.first %}<span class="tag">рекомендуется</span>{% endif %}
               </span>
               <span class="preset-desc">{{ preset.description }}</span>
               {% for note in preset.notes %}
@@ -109,6 +112,33 @@
           </label>
         {% endfor %}
       </div>
+
+      {% if legacy_presets %}
+      <details class="editor" style="margin-top:12px; border-top:none">
+        <summary>Устаревшие шаблоны — нужны при переезде со старой панели</summary>
+        <p class="muted" style="margin:8px 0">
+          Эти протоколы российские операторы распознают: VMess ловится по
+          рукопожатию, обычный TLS подвешивают после ~16 КБ. Создавайте их,
+          только если такие подключения уже раздавались пользователям.
+        </p>
+        <div class="preset-grid">
+          {% for preset in legacy_presets %}
+            <label class="preset">
+              <input type="radio" name="preset" value="{{ preset.key }}">
+              <span class="preset-body">
+                <span class="preset-title">
+                  {{ preset.title }} <span class="tag warn">устарел</span>
+                </span>
+                <span class="preset-desc">{{ preset.description }}</span>
+                {% if preset.legacy_reason %}
+                  <span class="preset-note">· {{ preset.legacy_reason }}</span>
+                {% endif %}
+              </span>
+            </label>
+          {% endfor %}
+        </div>
+      </details>
+      {% endif %}
 
       <div class="form-grid" style="margin-top:16px">
         <div>
@@ -228,8 +258,18 @@
         <td>{{ inbound.tag }}{% if inbound.remark %}<div class="muted">{{ inbound.remark }}</div>{% endif %}</td>
         <td>{{ inbound.protocol.value }}</td>
         <td class="mono">{{ inbound.port }}</td>
-        <td>{{ inbound.network.value }} / {{ inbound.security.value }}</td>
-        <td>{{ inbound.nodes | map(attribute='name') | join(', ') or '—' }}</td>
+        <td>
+          {{ inbound.network.value }} / {{ inbound.security.value }}
+          {% if legacy_inbounds[inbound.id] %}
+            <div class="muted" style="color:var(--warn)">{{ legacy_inbounds[inbound.id] }}</div>
+          {% endif %}
+        </td>
+        <td>
+          {{ inbound.nodes | map(attribute='name') | join(', ') or '—' }}
+          {% if not inbound.nodes %}
+            <div class="muted">ни на одном сервере — никто его не получит</div>
+          {% endif %}
+        </td>
         <td>{{ inbound.hosts | length }}</td>
         <td>
           {% if inbound.is_enabled %}<span class="badge ok">вкл</span>

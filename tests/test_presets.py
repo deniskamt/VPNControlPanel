@@ -75,6 +75,57 @@ def test_reality_preset_is_ready_to_use():
     assert settings["flow"] == "xtls-rprx-vision"
 
 
+def test_default_fingerprint_is_not_chrome():
+    """chrome/safari/ios у части операторов в подозрительных, firefox проходит."""
+    settings = preset_service.build_settings(
+        preset_service.PRESETS_BY_KEY["vless_reality"]
+    )
+    assert settings["fingerprint"] == "firefox"
+
+
+def test_xhttp_reality_preset_is_the_first_offer():
+    """Первый шаблон в списке — тот, что предлагается по умолчанию в форме."""
+    first = preset_service.CURRENT_PRESETS[0]
+    assert first.key == "vless_reality_xhttp"
+    assert first.network == NetworkType.xhttp
+    assert first.security == SecurityType.reality
+
+    settings = preset_service.build_settings(first, masking_domain="www.microsoft.com")
+    assert settings["mode"] == "auto"
+    assert settings["path"].startswith("/")
+    assert settings["privateKey"] and settings["publicKey"]
+    # Vision живёт только на TCP: на xhttp он ломает клиента.
+    assert "flow" not in settings
+
+
+def test_cdn_preset_keeps_the_domain_for_the_client():
+    preset = preset_service.PRESETS_BY_KEY["vless_xhttp_cdn"]
+    settings = preset_service.build_settings(preset, sni="cdn.example.com")
+
+    assert settings["host"] == "cdn.example.com"
+    assert settings["mode"] == "auto"
+    assert "privateKey" not in settings  # TLS терминирует CDN, REALITY тут нет
+
+
+def test_current_presets_are_reality_or_cdn_or_ss2022():
+    """Ни один «актуальный» шаблон не должен быть тем, что уже ловят."""
+    for preset in preset_service.CURRENT_PRESETS:
+        assert preset.protocol != ProxyType.vmess
+        assert preset.security != SecurityType.tls
+        if preset.protocol == ProxyType.shadowsocks:
+            assert preset.key.endswith("_2022")
+
+
+def test_legacy_presets_explain_themselves():
+    assert preset_service.LEGACY_PRESETS
+    for preset in preset_service.LEGACY_PRESETS:
+        assert preset.legacy is True
+        assert preset.legacy_reason, f"{preset.key} без объяснения, чем плох"
+    # Старые шаблоны никуда не делись — на них переезжают с Marzban.
+    keys = {preset.key for preset in preset_service.LEGACY_PRESETS}
+    assert {"vmess_ws", "trojan_tls", "shadowsocks", "vless_ws"} <= keys
+
+
 def test_ws_preset_generates_random_path():
     preset = preset_service.PRESETS_BY_KEY["vless_ws"]
     first = preset_service.build_settings(preset)
@@ -111,10 +162,66 @@ def test_every_preset_declares_consistent_protocol():
 
 
 def test_tag_suggestion_avoids_collisions():
-    preset = preset_service.PRESETS_BY_KEY["vless_reality"]
-    assert preset_service.suggest_tag(preset, []) == "VLESS-REALITY"
-    assert preset_service.suggest_tag(preset, ["VLESS-REALITY"]) == "VLESS-REALITY-2"
-    assert (
-        preset_service.suggest_tag(preset, ["VLESS-REALITY", "VLESS-REALITY-2"])
-        == "VLESS-REALITY-3"
+    preset = preset_service.PRESETS_BY_KEY["vless_reality_xhttp"]
+    base = "VLESS-REALITY-XHTTP"
+
+    assert preset_service.suggest_tag(preset, []) == base
+    assert preset_service.suggest_tag(preset, [base]) == f"{base}-2"
+    assert preset_service.suggest_tag(preset, [base, f"{base}-2"]) == f"{base}-3"
+
+
+def test_tags_of_different_presets_do_not_collide():
+    """Иначе два разных подключения на ноде получат один tag и статистика слипнется."""
+    tags = [preset_service.suggest_tag(preset, []) for preset in preset_service.PRESETS]
+    assert len(tags) == len(set(tags))
+
+
+def test_legacy_warning_names_the_problem():
+    """Предупреждение на уже созданном подключении — по фактической форме."""
+
+    class FakeInbound:
+        def __init__(self, protocol, network, security, settings=None):
+            self.protocol = protocol
+            self.network = network
+            self.security = security
+            self.settings = settings or {}
+
+    vmess = FakeInbound(ProxyType.vmess, NetworkType.ws, SecurityType.none)
+    assert "VMess" in preset_service.legacy_warning(vmess)
+
+    old_ss = FakeInbound(
+        ProxyType.shadowsocks, NetworkType.tcp, SecurityType.none,
+        {"method": "chacha20-ietf-poly1305"},
     )
+    assert "Shadowsocks 2022" in preset_service.legacy_warning(old_ss)
+
+    new_ss = FakeInbound(
+        ProxyType.shadowsocks, NetworkType.tcp, SecurityType.none,
+        {"method": "2022-blake3-aes-128-gcm"},
+    )
+    assert preset_service.legacy_warning(new_ss) == ""
+
+    own_tls = FakeInbound(ProxyType.vless, NetworkType.ws, SecurityType.tls)
+    assert "REALITY" in preset_service.legacy_warning(own_tls)
+
+    plaintext = FakeInbound(ProxyType.vless, NetworkType.tcp, SecurityType.none)
+    assert "без шифрования" in preset_service.legacy_warning(plaintext)
+
+
+def test_no_warning_on_good_and_on_cdn_setups():
+    class FakeInbound:
+        def __init__(self, protocol, network, security, settings=None):
+            self.protocol = protocol
+            self.network = network
+            self.security = security
+            self.settings = settings or {}
+
+    reality = FakeInbound(ProxyType.vless, NetworkType.xhttp, SecurityType.reality)
+    assert preset_service.legacy_warning(reality) == ""
+
+    # За CDN шифрования на сервере и не должно быть — это исправная схема,
+    # ругаться на неё нельзя, иначе предупреждения перестанут читать.
+    behind_cdn = FakeInbound(
+        ProxyType.vless, NetworkType.xhttp, SecurityType.none, {"host": "cdn.example.com"}
+    )
+    assert preset_service.legacy_warning(behind_cdn) == ""

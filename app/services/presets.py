@@ -3,6 +3,26 @@
 Смысл шаблона — чтобы рабочее подключение создавалось выбором строки из
 списка, а не написанием JSON руками. Всё, что можно сгенерировать (ключи
 REALITY, shortId, пути, пароли), панель генерирует сама.
+
+Набор шаблонов подобран под российские блокировки образца 2026 года. Коротко,
+что про них известно:
+
+  * ТСПУ «замораживает» TCP-соединение с зарубежным сервером после ~15–20 КБ
+    переданных данных — соединение не сбрасывается, а зависает, и клиент видит
+    таймаут. Простой VLESS поверх TLS/WS этим и ловится;
+  * XHTTP разносит трафик по нескольким обычным HTTP-запросам, поэтому под
+    порог не подпадает — это и есть главный шаблон на сегодня;
+  * REALITY заимствует TLS-рукопожатие настоящего сайта, поэтому активное
+    зондирование сервера ничего не находит; отдельный сертификат и домен не
+    нужны;
+  * отпечаток TLS-клиента chrome/safari/ios у части операторов помечается как
+    подозрительный, firefox проходит — поэтому он и стоит по умолчанию;
+  * протоколы поверх UDP/QUIC (Hysteria2, AmneziaWG) у части операторов
+    зарезаны целиком и требуют другого ядра — их здесь нет.
+
+Устаревшие шаблоны (VMess, Trojan, обычный Shadowsocks, VLESS без REALITY)
+оставлены с пометкой legacy: они нужны при переезде с Marzban, где такие
+подключения уже раздавались, но начинать с них не стоит.
 """
 
 from dataclasses import dataclass, field
@@ -27,15 +47,41 @@ class Preset:
     asks_certificate: bool = False
     notes: List[str] = field(default_factory=list)
     recommended: bool = False
+    # Шаблон оставлен ради совместимости, для новых подключений не годится.
+    legacy: bool = False
+    # Чем именно плох устаревший шаблон — показывается рядом с ним.
+    legacy_reason: str = ""
 
 
 PRESETS: List[Preset] = [
     Preset(
-        key="vless_reality",
-        title="VLESS + REALITY",
+        key="vless_reality_xhttp",
+        title="VLESS + REALITY + XHTTP",
         description=(
-            "Маскируется под обращение к чужому сайту. Не требует ни домена, "
-            "ни сертификата — работает сразу на голом IP."
+            "Основной вариант на 2026 год. Трафик разложен по обычным "
+            "HTTP-запросам, поэтому не попадает под «заморозку» соединения "
+            "после ~16 КБ, а рукопожатие берётся у настоящего сайта. "
+            "Ни домена, ни сертификата не нужно."
+        ),
+        protocol=ProxyType.vless,
+        network=NetworkType.xhttp,
+        security=SecurityType.reality,
+        default_port=443,
+        asks_masking_domain=True,
+        recommended=True,
+        notes=[
+            "Ключи, shortId и путь панель сгенерирует сама",
+            "Нужен свежий клиент: v2rayTun, Happ, Hiddify, v2rayNG, Streisand",
+        ],
+    ),
+    Preset(
+        key="vless_reality",
+        title="VLESS + REALITY + Vision",
+        description=(
+            "Классический REALITY поверх TCP с потоком xtls-rprx-vision: "
+            "самый быстрый вариант, работает у большинства проводных "
+            "провайдеров. На мобильных операторах чаще упирается в «заморозку» "
+            "— тогда берите XHTTP."
         ),
         protocol=ProxyType.vless,
         network=NetworkType.tcp,
@@ -49,15 +95,63 @@ PRESETS: List[Preset] = [
         key="vless_reality_grpc",
         title="VLESS + REALITY + gRPC",
         description=(
-            "Тот же REALITY, но поверх gRPC: лучше держится на плохих сетях "
-            "и мобильном интернете."
+            "Тот же REALITY поверх gRPC — запасной транспорт: держится там, "
+            "где придушен обычный TCP, и переживает плохую мобильную связь."
         ),
         protocol=ProxyType.vless,
         network=NetworkType.grpc,
         security=SecurityType.reality,
         default_port=2053,
         asks_masking_domain=True,
+        recommended=True,
         notes=["Имя сервиса будет сгенерировано"],
+    ),
+    Preset(
+        key="vless_xhttp_cdn",
+        title="VLESS + XHTTP за CDN",
+        description=(
+            "Для сетей с «белыми списками», где напрямую к зарубежному "
+            "серверу не пускают вовсе: трафик идёт через Cloudflare, а тот "
+            "в списках есть. Сервер слушает без шифрования, TLS терминирует "
+            "CDN — снаружи это обычный HTTPS к сайту за Cloudflare."
+        ),
+        protocol=ProxyType.vless,
+        network=NetworkType.xhttp,
+        security=SecurityType.none,
+        default_port=8080,
+        notes=[
+            "Домен за CDN укажите в поле SNI, потом добавьте его в «Хостах»",
+            "Порт наружу открывает Cloudflare: 443 или 2053/2083/2087/2096",
+        ],
+    ),
+    Preset(
+        key="shadowsocks_2022",
+        title="Shadowsocks 2022",
+        description=(
+            "Запасной канал без TLS вообще: иногда проходит там, где "
+            "зажимают именно TLS-соединения. Устойчив к активному "
+            "зондированию, но не маскируется под сайт."
+        ),
+        protocol=ProxyType.shadowsocks,
+        network=NetworkType.tcp,
+        security=SecurityType.none,
+        default_port=8389,
+        notes=["Шифрование 2022-blake3-aes-128-gcm"],
+    ),
+    Preset(
+        key="vless_ws_tls",
+        title="VLESS + WebSocket + TLS",
+        description="WebSocket со своим сертификатом на сервере — без CDN.",
+        protocol=ProxyType.vless,
+        network=NetworkType.ws,
+        security=SecurityType.tls,
+        default_port=443,
+        asks_certificate=True,
+        legacy=True,
+        legacy_reason=(
+            "обычный TLS к зарубежному серверу ТСПУ подвешивает после ~16 КБ"
+        ),
+        notes=["Нужен домен и сертификат"],
     ),
     Preset(
         key="vless_ws",
@@ -70,18 +164,9 @@ PRESETS: List[Preset] = [
         network=NetworkType.ws,
         security=SecurityType.none,
         default_port=8080,
+        legacy=True,
+        legacy_reason="за CDN лучше работает XHTTP, а напрямую WebSocket виден",
         notes=["Путь будет сгенерирован случайным", "Напрямую, без CDN, трафик не шифруется"],
-    ),
-    Preset(
-        key="vless_ws_tls",
-        title="VLESS + WebSocket + TLS",
-        description="WebSocket со своим сертификатом на сервере — без CDN.",
-        protocol=ProxyType.vless,
-        network=NetworkType.ws,
-        security=SecurityType.tls,
-        default_port=443,
-        asks_certificate=True,
-        notes=["Нужен домен и сертификат"],
     ),
     Preset(
         key="vless_httpupgrade",
@@ -94,6 +179,8 @@ PRESETS: List[Preset] = [
         network=NetworkType.httpupgrade,
         security=SecurityType.none,
         default_port=8081,
+        legacy=True,
+        legacy_reason="вытеснен XHTTP, который дробит и сам поток данных",
         notes=["Путь будет сгенерирован случайным"],
     ),
     Preset(
@@ -107,6 +194,8 @@ PRESETS: List[Preset] = [
         network=NetworkType.ws,
         security=SecurityType.none,
         default_port=8082,
+        legacy=True,
+        legacy_reason="VMess опознаётся по рукопожатию, в России давно ловится",
         notes=["Путь будет сгенерирован случайным"],
     ),
     Preset(
@@ -117,6 +206,8 @@ PRESETS: List[Preset] = [
         network=NetworkType.tcp,
         security=SecurityType.none,
         default_port=8083,
+        legacy=True,
+        legacy_reason="VMess опознаётся по рукопожатию, в России давно ловится",
     ),
     Preset(
         key="trojan_tls",
@@ -127,6 +218,8 @@ PRESETS: List[Preset] = [
         security=SecurityType.tls,
         default_port=443,
         asks_certificate=True,
+        legacy=True,
+        legacy_reason="то же, что у VLESS+TLS: обычное TLS-соединение подвешивают",
         notes=["Укажите пути к сертификату и ключу на сервере"],
     ),
     Preset(
@@ -137,34 +230,28 @@ PRESETS: List[Preset] = [
         network=NetworkType.ws,
         security=SecurityType.none,
         default_port=8084,
+        legacy=True,
+        legacy_reason="за CDN лучше работает XHTTP",
         notes=["Путь будет сгенерирован случайным"],
     ),
     Preset(
         key="shadowsocks",
-        title="Shadowsocks",
-        description="Простой и быстрый протокол без TLS. Хорош как запасной вариант.",
+        title="Shadowsocks (старый)",
+        description="Простой и быстрый протокол без TLS.",
         protocol=ProxyType.shadowsocks,
         network=NetworkType.tcp,
         security=SecurityType.none,
         default_port=8388,
+        legacy=True,
+        legacy_reason="уязвим к активному зондированию, берите Shadowsocks 2022",
         notes=["Шифрование chacha20-ietf-poly1305"],
-    ),
-    Preset(
-        key="shadowsocks_2022",
-        title="Shadowsocks 2022",
-        description=(
-            "Новая версия протокола: устойчивее к активному зондированию. "
-            "Нужен свежий клиент."
-        ),
-        protocol=ProxyType.shadowsocks,
-        network=NetworkType.tcp,
-        security=SecurityType.none,
-        default_port=8389,
-        notes=["Шифрование 2022-blake3-aes-128-gcm"],
     ),
 ]
 
 PRESETS_BY_KEY: Dict[str, Preset] = {preset.key: preset for preset in PRESETS}
+
+CURRENT_PRESETS: List[Preset] = [preset for preset in PRESETS if not preset.legacy]
+LEGACY_PRESETS: List[Preset] = [preset for preset in PRESETS if preset.legacy]
 
 # Домены, под которые прячется REALITY. Годятся сайты с TLS 1.3 и HTTP/2,
 # которые не блокируются и не принадлежат вам.
@@ -175,6 +262,11 @@ MASKING_DOMAINS = [
     "dl.google.com",
     "www.lovelive-anime.jp",
 ]
+
+# Отпечаток TLS-клиента. Не chrome: у части российских операторов отпечатки
+# chrome/safari/ios попали в подозрительные, а firefox проходит. Клиент может
+# переопределить его в «Хостах».
+DEFAULT_FINGERPRINT = "firefox"
 
 
 def build_settings(
@@ -197,7 +289,7 @@ def build_settings(
                 "privateKey": private_key,
                 "publicKey": public_key,
                 "shortIds": [generate_short_id()],
-                "fingerprint": "chrome",
+                "fingerprint": DEFAULT_FINGERPRINT,
                 "flow": "xtls-rprx-vision",
             }
         )
@@ -215,6 +307,11 @@ def build_settings(
         settings["path"] = generate_path()
         if sni:
             settings["host"] = sni.strip()
+        if preset.network == NetworkType.xhttp:
+            # auto: клиент сам выбирает режим — под REALITY это stream-one,
+            # за CDN packet-up. Ставить руками stream-one/packet-up имеет смысл
+            # только когда точно известна сеть, а «auto» верен в обоих случаях.
+            settings["mode"] = "auto"
     elif preset.network == NetworkType.grpc:
         settings["serviceName"] = generate_path().lstrip("/")
 
@@ -232,6 +329,46 @@ def build_settings(
         settings.pop("flow", None)
 
     return settings
+
+
+def legacy_warning(inbound: Any) -> str:
+    """Чем плохо уже существующее подключение — или пустая строка.
+
+    Смотрим только на то, в чём ошибиться нельзя: VMess, старый Shadowsocks,
+    свой TLS и полное отсутствие шифрования. Транспорт без шифрования за CDN
+    (ws/xhttp) — нормальная схема, TLS там терминирует CDN, и ругаться на неё
+    значило бы кричать «волки» на исправной настройке.
+    """
+    opts = inbound.settings or {}
+
+    if inbound.protocol == ProxyType.vmess:
+        return (
+            "VMess опознаётся по рукопожатию и в России давно ловится — "
+            "переведите пользователей на VLESS + REALITY"
+        )
+
+    if inbound.protocol == ProxyType.shadowsocks:
+        method = str(opts.get("method") or "")
+        if not method.startswith("2022-"):
+            return (
+                "старый Shadowsocks уязвим к активному зондированию — "
+                "замените на Shadowsocks 2022"
+            )
+        return ""
+
+    if inbound.security == SecurityType.reality:
+        return ""
+
+    if inbound.security == SecurityType.tls:
+        return (
+            "обычный TLS к зарубежному серверу ТСПУ подвешивает примерно "
+            "после 16 КБ — надёжнее REALITY"
+        )
+
+    if inbound.network == NetworkType.tcp:
+        return "подключение идёт без шифрования вовсе — так работать не будет"
+
+    return ""
 
 
 def suggest_tag(preset: Preset, existing_tags: List[str]) -> str:

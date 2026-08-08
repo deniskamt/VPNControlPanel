@@ -40,6 +40,19 @@ def _redirect() -> RedirectResponse:
     return RedirectResponse("/inbounds", status_code=status.HTTP_303_SEE_OTHER)
 
 
+async def _nodes_or_all(session: AsyncSession, node_ids: List[int]) -> List[Node]:
+    """Выбранные серверы, а если ни один не выбран — все включённые.
+
+    Новое подключение должно сразу оказаться у пользователей: подключение без
+    серверов не поднимается нигде и молча не работает.
+    """
+    if node_ids:
+        query = select(Node).where(Node.id.in_(node_ids))
+    else:
+        query = select(Node).where(Node.is_enabled.is_(True))
+    return list((await session.execute(query)).scalars().all())
+
+
 async def _get_inbound(session: AsyncSession, inbound_id: int) -> Inbound:
     inbound = await session.get(Inbound, inbound_id)
     if inbound is None:
@@ -74,6 +87,11 @@ async def list_inbounds(
             "networks": [item.value for item in NetworkType],
             "securities": [item.value for item in SecurityType],
             "presets": preset_service.PRESETS,
+            "current_presets": preset_service.CURRENT_PRESETS,
+            "legacy_presets": preset_service.LEGACY_PRESETS,
+            "legacy_inbounds": {
+                inbound.id: preset_service.legacy_warning(inbound) for inbound in inbounds
+            },
             "masking_domains": preset_service.MASKING_DOMAINS,
             "settings_json": {
                 inbound.id: json.dumps(
@@ -126,11 +144,7 @@ async def quick_create(
 
     # По умолчанию поднимаем подключение на всех серверах: держать его
     # включённым, но ни к одному серверу не привязанным, смысла нет.
-    if node_ids:
-        result = await session.execute(select(Node).where(Node.id.in_(node_ids)))
-    else:
-        result = await session.execute(select(Node).where(Node.is_enabled.is_(True)))
-    inbound.nodes = list(result.scalars().all())
+    inbound.nodes = list(await _nodes_or_all(session, node_ids))
 
     session.add(inbound)
     await log_action(
@@ -175,9 +189,9 @@ async def create_inbound(
         listen=listen.strip() or "0.0.0.0",
         settings=_parse_settings(settings_raw),
     )
-    if node_ids:
-        result = await session.execute(select(Node).where(Node.id.in_(node_ids)))
-        inbound.nodes = list(result.scalars().all())
+    # Как и в шаблонах: не выбрали серверы — значит, на все включённые.
+    # Иначе подключение создаётся «в никуда» и не доезжает ни до кого.
+    inbound.nodes = list(await _nodes_or_all(session, node_ids))
 
     session.add(inbound)
     await log_action(
@@ -249,11 +263,7 @@ async def import_inbound(
         security=parsed["security"],
         settings=parsed["settings"],
     )
-    if node_ids:
-        result = await session.execute(select(Node).where(Node.id.in_(node_ids)))
-    else:
-        result = await session.execute(select(Node).where(Node.is_enabled.is_(True)))
-    inbound.nodes = list(result.scalars().all())
+    inbound.nodes = list(await _nodes_or_all(session, node_ids))
 
     session.add(inbound)
     await log_action(

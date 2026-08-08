@@ -260,6 +260,10 @@ details.editor > div { padding: 0 16px 16px; }
   color: var(--ok); border: 1px solid rgba(53,196,138,0.4);
   background: rgba(53,196,138,0.12); border-radius: 999px; padding: 1px 7px;
 }
+.preset .tag.warn {
+  color: var(--warn); border-color: rgba(229,161,58,0.4);
+  background: rgba(229,161,58,0.12);
+}
 
 /* ================= Код и QR ================= */
 .code {
