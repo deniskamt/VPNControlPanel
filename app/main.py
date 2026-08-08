@@ -130,6 +130,13 @@ async def install_agent_script() -> FileResponse:
     )
 
 
+@app.get("/install/diagnose_node.sh", include_in_schema=False)
+async def diagnose_node_script() -> FileResponse:
+    return FileResponse(
+        BASE_DIR.parent / "scripts" / "diagnose_node.sh", media_type="text/x-shellscript"
+    )
+
+
 # Marzban-совместимый API — им пользуются боты и мобильное приложение.
 app.include_router(compat.router)
 

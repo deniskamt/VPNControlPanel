@@ -35,7 +35,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 
 # Версия агента. Увеличивается при каждом изменении этого файла: панель
 # сравнивает её со своей и показывает, на каких нодах агент устарел.
-AGENT_VERSION = 2
+AGENT_VERSION = 3
 
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")
 AGENT_HOST = os.getenv("AGENT_HOST", "0.0.0.0")
@@ -72,6 +72,22 @@ def require_token(authorization: str = Header(default="")) -> None:
     # Сравнение в постоянном времени, чтобы токен нельзя было подобрать по таймингу.
     if not hmac.compare_digest(authorization, f"Bearer {AGENT_TOKEN}"):
         raise HTTPException(401, "Неверный токен")
+
+
+def _meaningful_output(text: str, limit: int = 1200) -> str:
+    """Выжимка из вывода ядра: только то, что объясняет отказ.
+
+    Приветствие с версией и строки [Info] о чтении конфига ничего не говорят,
+    а вытесняют собой саму причину.
+    """
+    noise = ("Penetrates Everything", "A unified platform", "[Info]", "[Debug]")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    meaningful = [
+        line
+        for line in lines
+        if not line.startswith("Xray ") and not any(bit in line for bit in noise)
+    ]
+    return " ".join(meaningful or lines)[-limit:]
 
 
 class XrayProcess:
@@ -137,7 +153,10 @@ class XrayProcess:
         # осмысленную ошибку, а не «всё хорошо».
         time.sleep(1.0)
         if not self.running:
-            self.last_error = self.output_tail() or "xray упал без объяснений"
+            self.last_error = self.output_tail() or (
+                "Xray завершился сразу после запуска и ничего не написал; "
+                f"его вывод на ноде — {STDOUT_LOG}"
+            )
         else:
             self.last_error = ""
 
@@ -149,16 +168,34 @@ class XrayProcess:
             text = STDOUT_LOG.read_text("utf-8", errors="replace")
         except OSError:
             return ""
-        # Отбрасываем шум: приветствие с версией и строки [Info] о чтении
-        # конфига ничего не объясняют, а вытесняют собой саму причину.
-        noise = ("Penetrates Everything", "A unified platform", "[Info]", "[Debug]")
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        meaningful = [
-            line
-            for line in lines
-            if not line.startswith("Xray ") and not any(bit in line for bit in noise)
-        ]
-        return " ".join(meaningful or lines)[-limit:]
+        return _meaningful_output(text, limit)
+
+    def test_config(self, path: Path) -> str:
+        """Проверить конфиг ядром, ничего не запуская.
+
+        `xray run -test` печатает точную причину отказа и выходит. Ошибку в
+        конфиге так видно до подмены рабочего файла — Xray даже не
+        перезапускается, и клиенты ничего не замечают. Порты при этом не
+        занимаются, так что «адрес уже используется» ловится только на
+        настоящем старте — для этого проверка и не единственная.
+        """
+        try:
+            result = subprocess.run(
+                [XRAY_BIN, "run", "-test", "-config", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env=dict(os.environ, XRAY_LOCATION_ASSET=XRAY_ASSETS),
+            )
+        except (OSError, subprocess.SubprocessError):
+            # Не смогли даже спросить ядро — это не повод отвергать конфиг,
+            # пусть решает настоящий запуск.
+            return ""
+        if result.returncode == 0:
+            return ""
+        return _meaningful_output(result.stdout + result.stderr) or (
+            f"xray run -test завершился с кодом {result.returncode}"
+        )
 
     def stop(self) -> None:
         if not self.process:
@@ -264,13 +301,28 @@ def apply_config(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
             ) from exc
         xray.access_log = Path(access_log)
 
+    text = json.dumps(config, indent=2, ensure_ascii=False)
+
+    # Отвергнутый конфиг остаётся на диске: без него причину не воспроизвести
+    # руками — рабочий файл к этому моменту уже откачен на прежний.
+    # Расширение обязано остаться .json: формат Xray определяет по имени файла
+    # и на «config.json.rejected» отвечает «Failed to get format» — то есть
+    # забраковал бы любой, даже совершенно исправный конфиг.
+    rejected = XRAY_CONFIG.with_name(f"{XRAY_CONFIG.stem}.rejected.json")
+    where = f"конфиг сохранён на ноде: {rejected}"
+
+    # Сначала проверка без запуска: ошибку в конфиге ловим до того, как
+    # тронули рабочий файл, и Xray продолжает работать как ни в чём не бывало.
+    rejected.write_text(text, encoding="utf-8")
+    problem = xray.test_config(rejected)
+    if problem:
+        raise HTTPException(400, f"Конфиг не принят Xray: {problem} ({where})")
+
     backup = XRAY_CONFIG.with_suffix(".json.bak")
     if XRAY_CONFIG.exists():
         backup.write_text(XRAY_CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
 
-    XRAY_CONFIG.write_text(
-        json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    XRAY_CONFIG.write_text(text, encoding="utf-8")
     xray.restart()
 
     if not xray.running:
@@ -281,7 +333,10 @@ def apply_config(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
             # Откатываемся на прошлый рабочий конфиг, чтобы нода не легла.
             XRAY_CONFIG.write_text(backup.read_text(encoding="utf-8"), encoding="utf-8")
             xray.restart()
-        raise HTTPException(400, f"Конфиг не принят Xray: {reason}")
+        raise HTTPException(400, f"Конфиг не принят Xray: {reason} ({where})")
+
+    # Конфиг принят — держать копию отвергнутого незачем.
+    rejected.unlink(missing_ok=True)
 
     xray.config_hash = str(payload.get("hash") or "")
     return {
