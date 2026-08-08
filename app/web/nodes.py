@@ -16,6 +16,7 @@ from app.models.enums import NodeStatus
 from app.models.inbound import Inbound
 from app.models.node import Node
 from app.services.audit import log_action
+from app.services.flags import country_options
 from app.services.keys import generate_agent_token
 from app.services.node_client import NodeClient, NodeError
 from app.services.node_manager import load_users, poll_node, sync_node
@@ -59,6 +60,11 @@ async def list_nodes(
             "nodes": nodes,
             "inbounds": inbounds,
             "new_token": generate_agent_token(),
+            # Выбор страны — общий для формы добавления и всех форм правки.
+            "country_options": {
+                node.id: country_options(node.country) for node in nodes
+            },
+            "new_country_options": country_options(),
             "panel_url": settings.PANEL_URL,
             "NodeStatus": NodeStatus,
         },

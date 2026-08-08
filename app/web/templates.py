@@ -6,6 +6,8 @@ from typing import Optional
 
 from fastapi.templating import Jinja2Templates
 
+from app.services.flags import country_flag
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
@@ -62,4 +64,6 @@ templates.env.filters["dt"] = human_datetime
 templates.env.filters["expire"] = human_expire
 templates.env.filters["uptime"] = human_uptime
 templates.env.globals["usage_percent"] = usage_percent
+# Флаг страны нужен в нескольких шаблонах — от списка серверов до подписки.
+templates.env.globals["flag"] = country_flag
 templates.env.globals["now"] = datetime.utcnow

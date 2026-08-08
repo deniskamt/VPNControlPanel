@@ -1,9 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Серверы — VPN Panel{% endblock %}
 
-{% macro node_form(action, node=None, submit="Сохранить") %}
+{% macro node_form(action, node=None, submit="Сохранить", options=None) %}
 <form method="post" action="{{ action }}">
   <div class="form-grid">
+    <div class="field-flag">
+      <label>Флаг</label>
+      <select name="country" class="flag-select">
+        <option value="">— без флага —</option>
+        {# emoji, а не flag: имя flag занято глобальной функцией шаблонов #}
+        {% for code, emoji, name in options or [] %}
+          <option value="{{ code }}"
+                  {% if node and node.country and node.country|lower == code|lower %}selected{% endif %}>
+            {{ emoji }} {{ name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
     <div>
       <label>Название</label>
       <input type="text" name="name" value="{{ node.name if node else '' }}" placeholder="Netherlands #1" required>
@@ -25,11 +38,6 @@
       <input type="text" name="agent_token" class="mono"
              value="{{ '' if node else new_token }}"
              {% if not node %}required{% endif %}>
-    </div>
-    <div>
-      <label>Страна <span class="muted">(код из двух букв — станет флагом)</span></label>
-      <input type="text" name="country" value="{{ node.country or '' if node else '' }}"
-             placeholder="SE" maxlength="32">
     </div>
     <div>
       <label>Коэффициент трафика</label>
@@ -83,7 +91,7 @@
       открывать не придётся. Подключения панель выдаст новому серверу
       автоматически, если ничего не отмечать.
     </div>
-    {{ node_form('/nodes/create', none, 'Добавить сервер') }}
+    {{ node_form('/nodes/create', none, 'Добавить сервер', new_country_options) }}
     <p class="muted" style="margin-top:14px">
       После сохранения нажмите <b>«Установка»</b> в строке сервера — там будет
       готовая команда с уже подставленным токеном.
@@ -108,7 +116,7 @@
     {% for node in nodes %}
       <tr>
         <td>
-          <div>{{ node.name }}</div>
+          <div>{{ flag(node.country) }} {{ node.name }}</div>
           <div class="mono muted">{{ node.address }}:{{ node.agent_port }}</div>
         </td>
         <td>
@@ -173,7 +181,7 @@ AGENT_TOKEN={{ node.agent_token }} PANEL_URL={{ panel_url }} bash install_agent.
         </td>
       </tr>
       <tr id="node-{{ node.id }}" hidden>
-        <td colspan="8">{{ node_form('/nodes/' ~ node.id ~ '/update', node) }}</td>
+        <td colspan="8">{{ node_form('/nodes/' ~ node.id ~ '/update', node, 'Сохранить', country_options[node.id]) }}</td>
       </tr>
     {% endfor %}
     </tbody>

@@ -305,3 +305,8 @@ details.editor > div { padding: 0 16px 16px; }
 .kv { display: grid; grid-template-columns: 180px 1fr; gap: 8px 16px; font-size: 13px; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; }
+
+/* --- Выбор флага в форме сервера --- */
+.field-flag { max-width: 210px; }
+.flag-select { font-size: 15px; }
+.flag-select option { font-size: 15px; }

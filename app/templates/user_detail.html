@@ -68,8 +68,7 @@
           {% set access = access_by_node.get(node.id) %}
           <tr>
             <td>
-              {{ node.name }}
-              {% if node.country %}<span class="muted">· {{ node.country }}</span>{% endif %}
+              {{ flag(node.country) }} {{ node.name }}
               {% if not node.is_enabled %}<span class="badge mute">выключен</span>{% endif %}
             </td>
             <td>

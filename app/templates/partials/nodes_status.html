@@ -17,10 +17,7 @@
   <tbody>
   {% for node in nodes %}
     <tr>
-      <td>
-        {{ node.name }}
-        {% if node.country %}<span class="muted">· {{ node.country }}</span>{% endif %}
-      </td>
+      <td>{{ flag(node.country) }} {{ node.name }}</td>
       <td class="mono">{{ node.address }}</td>
       <td>
         {% if not node.is_enabled %}
