@@ -24,6 +24,7 @@ from app.models.user import User
 from app.services import notifier
 from app.services.audit import log_action
 from app.services.node_client import NodeClient, NodeError
+from app.services.xray_errors import explain
 from app.services.xray_config import build_node_config, config_hash
 
 
@@ -94,7 +95,7 @@ async def sync_node(
     try:
         result = await client.apply_config(config, new_hash)
     except NodeError as exc:
-        await _set_status(session, node, NodeStatus.error, str(exc))
+        await _set_status(session, node, NodeStatus.error, explain(str(exc)))
         await session.commit()
         logger.error(f"Не удалось применить конфиг на ноде {node.name}: {exc}")
         return False
@@ -317,7 +318,10 @@ async def poll_node(session: AsyncSession, node: Node) -> None:
 
     if not health.get("xray_running"):
         await _set_status(
-            session, node, NodeStatus.error, health.get("error") or "Xray не запущен"
+            session,
+            node,
+            NodeStatus.error,
+            explain(health.get("error") or health.get("output")) or "Xray не запущен",
         )
     else:
         await _set_status(session, node, NodeStatus.connected)

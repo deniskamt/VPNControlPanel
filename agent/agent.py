@@ -42,6 +42,8 @@ XRAY_API = os.getenv("XRAY_API", "127.0.0.1:10085")
 ACCESS_LOG = Path(os.getenv("XRAY_ACCESS_LOG", "/usr/local/etc/xray/access.log"))
 # Сколько байт с конца access-лога читать при подсчёте устройств.
 ACCESS_TAIL_BYTES = int(os.getenv("XRAY_ACCESS_TAIL", str(2 * 1024 * 1024)))
+# Куда складывать вывод ядра, чтобы при падении было что показать панели.
+STDOUT_LOG = Path(os.getenv("XRAY_STDOUT_LOG", "/usr/local/etc/xray/xray-stdout.log"))
 SSL_CERTFILE = os.getenv("SSL_CERTFILE", "")
 SSL_KEYFILE = os.getenv("SSL_KEYFILE", "")
 
@@ -78,6 +80,7 @@ class XrayProcess:
         # Путь берётся из применённого конфига: панель решает, куда Xray
         # пишет access-лог, и агент должен читать именно этот файл.
         self.access_log: Path = ACCESS_LOG
+        self._log_handle = None
 
     @property
     def running(self) -> bool:
@@ -102,12 +105,22 @@ class XrayProcess:
             return
 
         env = dict(os.environ, XRAY_LOCATION_ASSET=XRAY_ASSETS)
+        # Вывод ядра пишем в файл, а не в трубу: причину падения Xray печатает
+        # в stdout, и раньше она пропадала в DEVNULL, оставляя бесполезное
+        # «xray упал». Труба тут не годится — при работе ядро пишет много,
+        # буфер заполнится и процесс встанет.
+        try:
+            STDOUT_LOG.parent.mkdir(parents=True, exist_ok=True)
+            self._log_handle = open(STDOUT_LOG, "wb")
+        except OSError:
+            self._log_handle = None
+
         try:
             self.process = subprocess.Popen(
                 [XRAY_BIN, "run", "-config", str(XRAY_CONFIG)],
                 env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                stdout=self._log_handle or subprocess.DEVNULL,
+                stderr=subprocess.STDOUT if self._log_handle else subprocess.DEVNULL,
             )
         except OSError as exc:
             self.last_error = f"не удалось запустить xray: {exc}"
@@ -119,15 +132,28 @@ class XrayProcess:
         # осмысленную ошибку, а не «всё хорошо».
         time.sleep(1.0)
         if not self.running:
-            stderr = b""
-            if self.process and self.process.stderr:
-                try:
-                    stderr = self.process.stderr.read() or b""
-                except Exception:  # pragma: no cover - гонка при завершении
-                    stderr = b""
-            self.last_error = stderr.decode("utf-8", "replace")[-1000:] or "xray упал"
+            self.last_error = self.output_tail() or "xray упал без объяснений"
         else:
             self.last_error = ""
+
+    def output_tail(self, limit: int = 1200) -> str:
+        """Последние строки вывода ядра — то, что оно сказало перед падением."""
+        if not STDOUT_LOG.exists():
+            return ""
+        try:
+            text = STDOUT_LOG.read_text("utf-8", errors="replace")
+        except OSError:
+            return ""
+        # Отбрасываем шум: приветствие с версией и строки [Info] о чтении
+        # конфига ничего не объясняют, а вытесняют собой саму причину.
+        noise = ("Penetrates Everything", "A unified platform", "[Info]", "[Debug]")
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        meaningful = [
+            line
+            for line in lines
+            if not line.startswith("Xray ") and not any(bit in line for bit in noise)
+        ]
+        return " ".join(meaningful or lines)[-limit:]
 
     def stop(self) -> None:
         if not self.process:
@@ -140,6 +166,11 @@ class XrayProcess:
             self.process.wait(timeout=5)
         self.process = None
         self.started_at = None
+        if self._log_handle is not None:
+            try:
+                self._log_handle.close()
+            finally:
+                self._log_handle = None
 
     def restart(self) -> None:
         self.stop()
@@ -197,6 +228,7 @@ def health() -> Dict[str, Any]:
         "xray_version": xray.version(),
         "config_hash": xray.config_hash,
         "error": xray.last_error,
+        "output": xray.output_tail(400),
         "cpu_percent": cpu_percent(),
         "mem_percent": mem_percent(),
         "uptime": system_uptime(),
