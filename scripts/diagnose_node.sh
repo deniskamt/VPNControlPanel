@@ -92,12 +92,30 @@ for port in $ports; do
     info "порт $port свободен (никто не слушает)"
   elif echo "$line" | grep -q xray; then
     ok "порт $port слушает xray"
+    # Слушать мало: до порта ещё должны доходить снаружи. Самая частая
+    # причина «подключается, но интернета нет» — закрытый порт.
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+      if ufw status 2>/dev/null | grep -qE "^($port|$port/tcp)[[:space:]]+ALLOW"; then
+        ok "порт $port открыт в ufw"
+      else
+        bad "порт $port НЕ открыт в ufw — снаружи до него не достучаться"
+        bad "открыть: ufw allow ${port}/tcp"
+      fi
+    fi
   else
     who="$(echo "$line" | sed 's/.*users:((//; s/).*//' | tr -d '"')"
     bad "порт $port занят другой программой: ${who:-неизвестно}"
     bad "это и есть причина падения — освободите порт или смените его в панели"
   fi
 done
+
+if [[ -n "$ports" ]]; then
+  echo
+  echo "== Проверьте порты снаружи =="
+  info "у хостера может быть свой файрвол, ufw о нём не знает."
+  info "со своего компьютера: Test-NetConnection <адрес> -Port <порт>  (PowerShell)"
+  info "или:                  nc -vz <адрес> <порт>                    (Linux/Mac)"
+fi
 
 echo
 echo "== Прочее =="
