@@ -210,3 +210,37 @@ def test_vision_profile_keeps_flow_only_on_tcp():
     profile = client_config.build_profile(make_user([over_xhttp]), over_xhttp, node)
     account = profile["outbounds"][0]["settings"]["vnext"][0]["users"][0]
     assert "flow" not in account
+
+
+def test_reality_settings_allow_older_client_cores():
+    """Иначе после обновления ядра на ноде приложения перестают подключаться.
+
+    Проверено на живых сборках: сервер 26.7.28 без minClientVer не пускает
+    клиента 25.6.8, а с ним пускает.
+    """
+    for key in ("vless_reality_xhttp", "vless_reality", "vless_reality_grpc"):
+        settings = preset_service.build_settings(preset_service.PRESETS_BY_KEY[key])
+        assert settings["minClientVer"] == "1.8.0", key
+
+    inbound = make_inbound(
+        preset_service.build_settings(preset_service.PRESETS_BY_KEY["vless_reality_xhttp"])
+    )
+    node = make_node([inbound])
+    config = build_node_config(node, [make_user([inbound])])
+    reality = config["inbounds"][1]["streamSettings"]["realitySettings"]
+    assert reality["minClientVer"] == "1.8.0"
+
+
+def test_obfuscation_is_not_enabled_by_default():
+    """Она несовместима между версиями ядра — по умолчанию её быть не должно."""
+    for preset in preset_service.CURRENT_PRESETS:
+        settings = preset_service.build_settings(preset)
+        assert not xhttp.has_obfuscation(settings), preset.key
+
+
+def test_obfuscated_inbound_is_flagged_as_a_problem():
+    settings = preset_service.build_settings(
+        preset_service.PRESETS_BY_KEY["vless_reality_xhttp"], obfuscate=True
+    )
+    warning = preset_service.legacy_warning(make_inbound(settings))
+    assert "ровно той же версии" in warning

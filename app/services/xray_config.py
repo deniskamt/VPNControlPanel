@@ -85,6 +85,12 @@ def _stream_settings(inbound: Inbound) -> Dict[str, Any]:
             "privateKey": opts.get("privateKey", ""),
             "shortIds": opts.get("shortIds") or [""],
         }
+        # Без этого поля свежее ядро пускает только клиентов не старше себя,
+        # и приложение с ядром постарше просто не соединяется.
+        if opts.get("minClientVer"):
+            stream["realitySettings"]["minClientVer"] = opts["minClientVer"]
+        if opts.get("maxTimeDiff"):
+            stream["realitySettings"]["maxTimeDiff"] = opts["maxTimeDiff"]
     else:
         stream["security"] = "none"
 
