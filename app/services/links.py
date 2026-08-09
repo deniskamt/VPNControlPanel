@@ -59,8 +59,20 @@ def _transport_params(
         header_host = (host.host if host and host.host else opts.get("host")) or ""
         if header_host:
             params["host"] = header_host
-        if network == NetworkType.xhttp and opts.get("mode"):
-            params["mode"] = opts["mode"]
+        if network == NetworkType.xhttp:
+            if opts.get("mode"):
+                params["mode"] = opts["mode"]
+            # Маскировочные поля едут в extra — это то место, куда клиент на
+            # Xray-core кладёт содержимое как есть в xhttpSettings. Отдельных
+            # query-параметров у них нет, и без extra клиент соединился бы с
+            # настройками по умолчанию, то есть никак.
+            extra = {
+                key: opts[key]
+                for key in xhttp.OBFUSCATION_KEYS
+                if opts.get(key) not in (None, "")
+            }
+            if extra:
+                params["extra"] = json.dumps(extra, separators=(",", ":"))
     elif network == NetworkType.grpc:
         params["serviceName"] = (
             host.path if host and host.path else opts.get("serviceName")
@@ -134,13 +146,6 @@ def build_link(
     """Одна ссылка для пары (нода, inbound). None — если у юзера нет ключа."""
     creds = user.proxy_settings(inbound.protocol)
     if creds is None:
-        return None
-
-    # Маскировочные параметры XHTTP в ссылку не помещаются: общепринятых
-    # query-параметров для них нет. Клиент взял бы значения по умолчанию и
-    # не соединился, поэтому такое подключение отдаётся только JSON-подпиской,
-    # а нерабочую ссылку не выдаём вовсе.
-    if inbound.network == NetworkType.xhttp and xhttp.has_obfuscation(inbound.settings or {}):
         return None
 
     address = (host.address if host and host.address else None) or node.address

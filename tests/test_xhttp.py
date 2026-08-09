@@ -102,15 +102,44 @@ def test_transport_settings_carry_obfuscation_to_the_core():
     assert block["mode"] == "stream-one"
 
 
-def test_obfuscated_inbound_gets_no_plain_link():
-    """Ссылка без этих параметров не соединится — лучше не выдавать её вовсе."""
+def test_obfuscated_inbound_carries_settings_in_extra():
+    """Клиенту хватает обычной ссылки: маскировка едет в параметре extra."""
+    import json
+    import urllib.parse
+
     settings = preset_service.build_settings(
         preset_service.PRESETS_BY_KEY["vless_reality_xhttp"], obfuscate=True
     )
     inbound = make_inbound(settings)
     node = make_node([inbound])
 
-    assert build_link(make_user([inbound]), inbound, node) is None
+    link = build_link(make_user([inbound]), inbound, node)
+    assert link, "ссылка обязана быть: без неё подключение не дойдёт до клиента"
+
+    params = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(link).query))
+    extra = json.loads(params["extra"])
+
+    # extra должно точно повторять то, что стоит на сервере.
+    for key in xhttp.OBFUSCATION_KEYS:
+        assert extra[key] == settings[key], key
+    # path и mode остаются обычными параметрами, дублировать их незачем.
+    assert "path" not in extra and "mode" not in extra
+    assert params["mode"] == "stream-one"
+
+
+def test_plain_inbound_has_no_extra_in_link():
+    """Без маскировки лишнего параметра в ссылке быть не должно."""
+    import urllib.parse
+
+    settings = preset_service.build_settings(
+        preset_service.PRESETS_BY_KEY["vless_reality_xhttp"]
+    )
+    inbound = make_inbound(settings)
+    node = make_node([inbound])
+
+    link = build_link(make_user([inbound]), inbound, node)
+    params = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(link).query))
+    assert "extra" not in params
 
 
 def test_plain_xhttp_still_gets_a_link_with_mode():

@@ -139,9 +139,10 @@
           <button class="small" data-copy="#sub-json">Копировать</button>
         </div>
         <p class="muted" style="margin-top:6px">
-          Та же подписка, но конфигами целиком. Нужна для подключений с
-          усиленной маскировкой: их параметры в обычную ссылку не помещаются.
-          Понимают v2rayTun, Happ, v2rayNG, Streisand, NekoBox.
+          Та же подписка, но конфигами целиком — про запас. Пригодится, если
+          клиент не понял параметр <span class="mono">extra</span> в обычной
+          ссылке (в нём едет усиленная маскировка). Понимают v2rayTun, Happ,
+          v2rayNG, Streisand, NekoBox.
         </p>
         <p class="muted">
           Ссылка переживает продление и смену серверов — меняется только при отзыве.
@@ -194,7 +195,7 @@
                      {% if inbound.id in user_inbound_ids %}checked{% endif %}>
               {{ inbound.tag }} <span class="muted">({{ inbound.protocol.value }})</span>
               {% if json_only_inbounds and inbound.id in json_only_inbounds %}
-                <span class="badge warn" title="У подключения включена усиленная маскировка: её параметры не помещаются в обычную ссылку">только JSON</span>
+                <span class="badge warn" title="Усиленная маскировка: параметры едут в ссылке параметром extra. Клиент должен быть на свежем Xray-core (v2rayTun, Happ, v2rayNG, Streisand). Если не подхватил — дайте JSON-подписку">маскировка</span>
               {% endif %}
             </label>
           {% endfor %}

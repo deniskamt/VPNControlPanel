@@ -382,8 +382,8 @@ def test_new_inbound_reaches_existing_users(client, auth, inbound):
     assert any(link.startswith("ss://") for link in after["links"]), after["links"]
 
 
-def test_obfuscated_inbound_only_in_json_subscription(client, auth, inbound):
-    """С усиленной маскировкой обычной ссылки быть не должно — только JSON."""
+def test_obfuscated_inbound_reaches_both_subscriptions(client, auth, inbound):
+    """Маскировка должна доезжать и обычной ссылкой (через extra), и JSON."""
     client.post(
         "/api/user",
         headers=auth,
@@ -407,7 +407,13 @@ def test_obfuscated_inbound_only_in_json_subscription(client, auth, inbound):
     links = client.get(f"/c/{token}?format=plain").text
     profiles = client.get(f"/c/{token}?format=json").json()
 
-    assert "type=xhttp" not in links
+    import json as _json
+    import urllib.parse as _url
+
+    xhttp_links = [line for line in links.splitlines() if "type=xhttp" in line]
+    assert xhttp_links, "маскированное подключение обязано быть в обычной подписке"
+    params = dict(_url.parse_qsl(_url.urlparse(xhttp_links[0]).query))
+    assert _json.loads(params["extra"])["xPaddingMethod"] == "tokenish"
     xhttp_profiles = [
         profile for profile in profiles
         if profile["outbounds"][0]["streamSettings"]["network"] == "xhttp"
