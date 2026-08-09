@@ -193,9 +193,16 @@
               <input type="checkbox" name="inbound_ids" value="{{ inbound.id }}"
                      {% if inbound.id in user_inbound_ids %}checked{% endif %}>
               {{ inbound.tag }} <span class="muted">({{ inbound.protocol.value }})</span>
+              {% if json_only_inbounds and inbound.id in json_only_inbounds %}
+                <span class="badge warn" title="У подключения включена усиленная маскировка: её параметры не помещаются в обычную ссылку">только JSON</span>
+              {% endif %}
             </label>
           {% endfor %}
         </div>
+        <p class="muted" style="margin-top:6px">
+          Ключи протокола выдаются сами: отметили Trojan или Shadowsocks —
+          пароль появится при сохранении.
+        </p>
       </div>
 
       <button type="submit" class="primary">Сохранить</button>

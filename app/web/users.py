@@ -13,11 +13,17 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.access import UserNodeAccess
 from app.models.admin import Admin
-from app.models.enums import DataLimitResetStrategy, ProxyType, UserStatus
+from app.models.enums import (
+    DataLimitResetStrategy,
+    NetworkType,
+    ProxyType,
+    UserStatus,
+)
 from app.models.inbound import Inbound
 from app.models.node import Node
 from app.models.user import User
 from app.services import users as user_service
+from app.services import xhttp
 from app.services.audit import log_action
 from app.services.qr import qr_svg
 from app.services.worker import trigger_sync
@@ -150,6 +156,14 @@ async def user_detail(
             "nodes": nodes,
             "access_by_node": access_by_node,
             "user_inbound_ids": {inbound.id for inbound in user.inbounds},
+            # Подключения с усиленной маскировкой в обычную ссылку не влезают:
+            # без пометки их отсутствие в приложении выглядит как поломка.
+            "json_only_inbounds": {
+                inbound.id
+                for inbound in inbounds
+                if inbound.network == NetworkType.xhttp
+                and xhttp.has_obfuscation(inbound.settings or {})
+            },
             "protocols": [item.value for item in ProxyType],
             "statuses": [item.value for item in UserStatus],
             "subscription_url": subscription_url,
@@ -238,6 +252,20 @@ async def update_user(
     if inbound_ids:
         result = await session.execute(select(Inbound).where(Inbound.id.in_(inbound_ids)))
         user.inbounds = list(result.scalars().all())
+        # Отметить Trojan или Shadowsocks мало: без ключа нужного протокола
+        # ссылку не из чего собрать, и подключение молча не появлялось в
+        # подписке. Ключи выдаём сразу.
+        issued = user_service.ensure_credentials(user)
+        if issued:
+            await log_action(
+                session,
+                action="user.credentials",
+                actor=admin.username,
+                target=user.username,
+                target_type="user",
+                message="выданы ключи: "
+                + ", ".join(protocol.value for protocol in issued),
+            )
 
     await log_action(
         session,

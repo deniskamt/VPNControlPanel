@@ -15,6 +15,7 @@ from app.models.enums import NetworkType, ProxyType, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.services import presets as preset_service
+from app.services import users as user_service
 from app.services import xray_import
 from app.services.audit import log_action
 from app.services.worker import trigger_sync
@@ -149,13 +150,17 @@ async def quick_create(
     inbound.nodes = list(await _nodes_or_all(session, node_ids))
 
     session.add(inbound)
+    await session.flush()
+    # Новое подключение сразу у людей: иначе оно поднимется на серверах и не
+    # доедет ни до кого. Заодно выдаём ключи протокола тем, у кого их не было.
+    granted = await user_service.grant_inbound_to_all(session, inbound)
     await log_action(
         session,
         action="inbound.create",
         actor=admin.username,
         target=tag,
         target_type="inbound",
-        message=f"по шаблону «{template.title}»",
+        message=f"по шаблону «{template.title}», выдано пользователям: {granted}",
     )
     await session.commit()
 
@@ -196,16 +201,45 @@ async def create_inbound(
     inbound.nodes = list(await _nodes_or_all(session, node_ids))
 
     session.add(inbound)
+    await session.flush()
+    granted = await user_service.grant_inbound_to_all(session, inbound)
     await log_action(
         session,
         action="inbound.create",
         actor=admin.username,
         target=inbound.tag,
         target_type="inbound",
+        message=f"выдано пользователям: {granted}",
     )
     await session.commit()
 
     trigger_sync()
+    return _redirect()
+
+
+@router.post("/{inbound_id}/grant-all")
+async def grant_inbound(
+    inbound_id: int,
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Выдать подключение всем пользователям.
+
+    Нужно для подключений, созданных до того, как выдача стала автоматической:
+    иначе их пришлось бы отмечать в карточке каждого пользователя.
+    """
+    inbound = await _get_inbound(session, inbound_id)
+    granted = await user_service.grant_inbound_to_all(session, inbound)
+
+    await log_action(
+        session,
+        action="inbound.grant_all",
+        actor=admin.username,
+        target=inbound.tag,
+        target_type="inbound",
+        message=f"выдано пользователям: {granted}",
+    )
+    await session.commit()
     return _redirect()
 
 
@@ -268,6 +302,9 @@ async def import_inbound(
     inbound.nodes = list(await _nodes_or_all(session, node_ids))
 
     session.add(inbound)
+    await session.flush()
+    granted = await user_service.grant_inbound_to_all(session, inbound)
+    parsed["warnings"].append(f"выдано пользователям: {granted}")
     await log_action(
         session,
         action="inbound.import",

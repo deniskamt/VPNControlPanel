@@ -276,7 +276,8 @@ def test_quick_create_makes_working_inbound(client, inbound):
     assert created.status_code == 303, created.text
 
     page = client.get("/inbounds").text
-    assert "VLESS-REALITY-2" in page  # первый tag занят фикстурой
+    # Tag берётся из названия шаблона: «VLESS + REALITY + Vision».
+    assert "VLESS-REALITY-VISION" in page
 
     # Приватный ключ уходит в конфиг сервера, публичный там не нужен —
     # он живёт только в ссылке клиента. (В разметке кавычки экранированы,
@@ -352,3 +353,105 @@ def test_empty_announce_is_not_sent(client, auth, inbound):
 
     assert "announce" not in response.headers
     assert "support-url" not in response.headers
+
+
+def test_new_inbound_reaches_existing_users(client, auth, inbound):
+    """Ровно жалоба администратора: создал протокол — а у людей его нет.
+
+    Проверяется на настоящей базе: и выдача подключения существующим
+    пользователям, и ключи протокола, без которых ссылку не собрать.
+    """
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_links", "proxies": {"vless": {}}, "expire": 0},
+    )
+    before = client.get("/api/user/user_links", headers=auth).json()
+    assert set(before["proxies"]) == {"vless"}
+
+    created = client.post(
+        "/inbounds/quick",
+        data={"preset": "shadowsocks_2022", "port": 9389},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303, created.text
+
+    after = client.get("/api/user/user_links", headers=auth).json()
+    # Ключ Shadowsocks выдан сам, иначе подключение молча не появилось бы.
+    assert "shadowsocks" in after["proxies"]
+    assert any(link.startswith("ss://") for link in after["links"]), after["links"]
+
+
+def test_obfuscated_inbound_only_in_json_subscription(client, auth, inbound):
+    """С усиленной маскировкой обычной ссылки быть не должно — только JSON."""
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_json", "proxies": {"vless": {}}, "expire": 0},
+    )
+    created = client.post(
+        "/inbounds/quick",
+        data={
+            "preset": "vless_reality_xhttp",
+            "port": 9443,
+            "masking_domain": "www.samsung.com",
+            "obfuscate": "1",
+        },
+        follow_redirects=False,
+    )
+    assert created.status_code == 303, created.text
+
+    token = client.get("/api/user/user_json", headers=auth).json()["subscription_url"]
+    token = token.rstrip("/").split("/")[-1]
+
+    links = client.get(f"/c/{token}?format=plain").text
+    profiles = client.get(f"/c/{token}?format=json").json()
+
+    assert "type=xhttp" not in links
+    xhttp_profiles = [
+        profile for profile in profiles
+        if profile["outbounds"][0]["streamSettings"]["network"] == "xhttp"
+    ]
+    assert xhttp_profiles, "маскированное подключение обязано быть в JSON-подписке"
+    block = xhttp_profiles[0]["outbounds"][0]["streamSettings"]["xhttpSettings"]
+    assert block["mode"] == "stream-one"
+    assert block["xPaddingMethod"] == "tokenish"
+
+
+def test_grant_all_button_hands_out_an_older_inbound(client, auth, inbound):
+    """Подключения, созданные до автоматической выдачи, раздаются кнопкой."""
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_grant", "proxies": {"vless": {}},
+              "inbounds": {"vless": ["VLESS-REALITY"]}, "expire": 0},
+    )
+    before = client.get("/api/user/user_grant", headers=auth).json()
+    assert "trojan" not in before["proxies"]
+
+    created = client.post(
+        "/inbounds/create",
+        data={
+            "tag": "TROJAN-OLD", "protocol": "trojan", "port": 9444,
+            "network": "tcp", "security": "tls", "listen": "0.0.0.0",
+            "settings": '{"sni": "vpn.example.com"}',
+        },
+        follow_redirects=False,
+    )
+    assert created.status_code == 303, created.text
+
+    # Снимаем подключение у пользователя, изображая созданное «до фикса».
+    page = client.get("/inbounds").text
+    assert "TROJAN-OLD" in page
+    client.post(
+        "/users/1/update",
+        data={"user_status": "active", "inbound_ids": [1]},
+        follow_redirects=False,
+    )
+
+    granted = client.post("/inbounds/2/grant-all", follow_redirects=False)
+    assert granted.status_code == 303
+
+    after = client.get("/api/user/user_grant", headers=auth).json()
+    assert "trojan" in after["proxies"]
+    assert any(link.startswith("trojan://") for link in after["links"]), after["links"]

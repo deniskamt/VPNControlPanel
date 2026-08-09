@@ -296,6 +296,10 @@
         <td>
           <div class="actions">
             <button class="small" data-toggle="#inbound-{{ inbound.id }}">Настроить</button>
+            <form class="inline" method="post" action="/inbounds/{{ inbound.id }}/grant-all"
+                  data-confirm="Выдать «{{ inbound.tag }}» всем пользователям? Кому нужно, выдадим и ключи протокола.">
+              <button class="small" type="submit">Выдать всем</button>
+            </form>
             <form class="inline" method="post" action="/inbounds/{{ inbound.id }}/toggle">
               <button class="small" type="submit">{{ 'Выключить' if inbound.is_enabled else 'Включить' }}</button>
             </form>

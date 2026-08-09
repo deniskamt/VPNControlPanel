@@ -191,6 +191,47 @@ def subscription_token(user: User) -> str:
     return create_subscription_token(user.username, int(moment.timestamp()))
 
 
+def ensure_credentials(user: User) -> List[ProxyType]:
+    """Выдать ключи для протоколов, которых у пользователя ещё нет.
+
+    Подключение, отмеченное у пользователя, но без ключа нужного протокола,
+    просто не попадает в подписку: ссылку не из чего собрать. Снаружи это
+    выглядит как «выбрал Trojan, а он не появился», причём молча. Поэтому
+    ключи выдаются сами — по набору выбранных подключений.
+    """
+    needed = {inbound.protocol for inbound in user.inbounds}
+    have = {proxy.protocol for proxy in user.proxies}
+
+    issued: List[ProxyType] = []
+    for protocol in sorted(needed - have, key=lambda item: item.value):
+        user.proxies.append(
+            UserProxy(protocol=protocol, settings=default_proxy_settings(protocol))
+        )
+        issued.append(protocol)
+    return issued
+
+
+async def grant_inbound_to_all(session: AsyncSession, inbound: Inbound) -> int:
+    """Выдать новое подключение всем пользователям.
+
+    Новый протокол должен появиться у людей сам: иначе администратор создаёт
+    подключение, оно поднимается на серверах — и не доезжает ни до кого, пока
+    каждому пользователю не проставить галочку руками.
+    """
+    result = await session.execute(select(User))
+    changed = 0
+
+    for user in result.scalars().all():
+        if any(item.id == inbound.id for item in user.inbounds):
+            continue
+        user.inbounds.append(inbound)
+        ensure_credentials(user)
+        changed += 1
+
+    await session.flush()
+    return changed
+
+
 async def user_links(session: AsyncSession, user: User) -> List[str]:
     result = await session.execute(
         select(Node).where(Node.is_enabled.is_(True)).order_by(Node.sort_order, Node.id)
