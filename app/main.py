@@ -137,6 +137,13 @@ async def diagnose_node_script() -> FileResponse:
     )
 
 
+@app.get("/install/selftest_node.py", include_in_schema=False)
+async def selftest_node_script() -> FileResponse:
+    return FileResponse(
+        BASE_DIR.parent / "scripts" / "selftest_node.py", media_type="text/x-python"
+    )
+
+
 # Marzban-совместимый API — им пользуются боты и мобильное приложение.
 app.include_router(compat.router)
 

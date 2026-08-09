@@ -198,6 +198,16 @@ PANEL_URL={{ panel_url }} bash install_agent.sh</div>
 bash diagnose_node.sh</div>
             <button class="small" data-copy="#diag-{{ node.id }}">Копировать</button>
           </div>
+          <p class="muted">
+            Если сервер зелёный, а у пользователей нет интернета — проверка
+            подключения с самой ноды. Она отвечает на главный вопрос: туннель
+            не поднимается или обрывается путь до пользователя.
+          </p>
+          <div class="code-block">
+            <div class="code" id="self-{{ node.id }}">curl -fsSL {{ panel_url }}/install/selftest_node.py -o selftest_node.py
+python3 selftest_node.py</div>
+            <button class="small" data-copy="#self-{{ node.id }}">Копировать</button>
+          </div>
           <p class="muted" style="margin-bottom:0">
             После установки закройте порт {{ node.agent_port }} для всех, кроме панели:
             <span class="mono">ufw allow from &lt;IP панели&gt; to any port {{ node.agent_port }} proto tcp</span>
