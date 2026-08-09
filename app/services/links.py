@@ -62,15 +62,20 @@ def _transport_params(
         if network == NetworkType.xhttp:
             if opts.get("mode"):
                 params["mode"] = opts["mode"]
-            # Маскировочные поля едут в extra — это то место, куда клиент на
-            # Xray-core кладёт содержимое как есть в xhttpSettings. Отдельных
-            # query-параметров у них нет, и без extra клиент соединился бы с
-            # настройками по умолчанию, то есть никак.
-            extra = {
-                key: opts[key]
-                for key in xhttp.OBFUSCATION_KEYS
-                if opts.get(key) not in (None, "")
-            }
+            # Всё, для чего нет своего query-параметра, едет в extra — туда
+            # клиент на Xray-core кладёт содержимое как есть в xhttpSettings.
+            # Это и дробление соединений (scMaxEachPostBytes, xmux и прочее),
+            # без которого XHTTP теряет смысл, и маскировочные поля.
+            extra: Dict[str, Any] = {}
+            if isinstance(opts.get("extra"), dict):
+                extra.update(opts["extra"])
+            extra.update(
+                {
+                    key: opts[key]
+                    for key in xhttp.OBFUSCATION_KEYS
+                    if opts.get(key) not in (None, "")
+                }
+            )
             if extra:
                 params["extra"] = json.dumps(extra, separators=(",", ":"))
     elif network == NetworkType.grpc:

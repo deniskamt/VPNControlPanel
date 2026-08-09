@@ -42,20 +42,20 @@ def make_user(inbounds):
     )
 
 
-def test_default_mode_is_stream_one():
-    """auto давал ~60 МБ/с против ~78 у stream-one на одном и том же файле."""
-    settings = preset_service.build_settings(
-        preset_service.PRESETS_BY_KEY["vless_reality_xhttp"]
-    )
-    assert settings["mode"] == "stream-one"
+def test_xhttp_splits_connections_instead_of_one_long_stream():
+    """Под REALITY «auto» выбирает stream-one — тот самый длинный поток,
+    который ТСПУ подвешивает. Значит, режим надо задавать явно."""
+    for key in ("vless_reality_xhttp", "vless_xhttp_cdn"):
+        settings = preset_service.build_settings(preset_service.PRESETS_BY_KEY[key])
+        assert settings["mode"] == "packet-up", key
 
-
-def test_cdn_preset_uses_packet_up():
-    """За CDN длинный ответ часто режут — там нужен packet-up."""
-    settings = preset_service.build_settings(
-        preset_service.PRESETS_BY_KEY["vless_xhttp_cdn"]
-    )
-    assert settings["mode"] == "packet-up"
+        extra = settings["extra"]
+        # Ни одно соединение не должно нести много: ограничен размер POST'а,
+        # даунлинк пересоздаётся, соединение переиспользуется ограниченно.
+        assert extra["scMaxEachPostBytes"]
+        assert extra["scStreamUpServerSecs"]
+        assert extra["xmux"]["cMaxReuseTimes"]
+        assert extra["xmux"]["hMaxRequestTimes"]
 
 
 @pytest.mark.parametrize("_", range(20))
@@ -99,7 +99,7 @@ def test_transport_settings_carry_obfuscation_to_the_core():
 
     for key in xhttp.OBFUSCATION_KEYS:
         assert block[key] == settings[key], key
-    assert block["mode"] == "stream-one"
+    assert block["mode"] == "packet-up"
 
 
 def test_obfuscated_inbound_carries_settings_in_extra():
@@ -124,11 +124,12 @@ def test_obfuscated_inbound_carries_settings_in_extra():
         assert extra[key] == settings[key], key
     # path и mode остаются обычными параметрами, дублировать их незачем.
     assert "path" not in extra and "mode" not in extra
-    assert params["mode"] == "stream-one"
+    assert params["mode"] == "packet-up"
 
 
-def test_plain_inbound_has_no_extra_in_link():
-    """Без маскировки лишнего параметра в ссылке быть не должно."""
+def test_link_carries_the_splitting_settings():
+    """Без них клиент откроет один длинный поток, и смысл XHTTP пропадёт."""
+    import json
     import urllib.parse
 
     settings = preset_service.build_settings(
@@ -138,19 +139,11 @@ def test_plain_inbound_has_no_extra_in_link():
     node = make_node([inbound])
 
     link = build_link(make_user([inbound]), inbound, node)
+    assert link and "type=xhttp" in link and "mode=packet-up" in link
+
     params = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(link).query))
-    assert "extra" not in params
-
-
-def test_plain_xhttp_still_gets_a_link_with_mode():
-    settings = preset_service.build_settings(
-        preset_service.PRESETS_BY_KEY["vless_reality_xhttp"]
-    )
-    inbound = make_inbound(settings)
-    node = make_node([inbound])
-
-    link = build_link(make_user([inbound]), inbound, node)
-    assert link and "type=xhttp" in link and "mode=stream-one" in link
+    extra = json.loads(params["extra"])
+    assert extra == settings["extra"]
 
 
 def test_json_profile_repeats_server_settings_exactly():

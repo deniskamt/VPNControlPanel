@@ -319,11 +319,13 @@ def build_settings(
         if sni:
             settings["host"] = sni.strip()
         if preset.network == NetworkType.xhttp:
-            # stream-one, а не auto: на замерах (Xray 26.7.28, один и тот же
-            # файл через один и тот же канал) auto давал ~60 МБ/с, stream-one
-            # ~78 МБ/с. За CDN длинный ответ часто режут — там packet-up.
-            settings["mode"] = "packet-up" if preset.security == SecurityType.none \
-                else xhttp.DEFAULT_MODE
+            # packet-up, а не stream-one и тем более не auto. Под REALITY
+            # «auto» выбирает stream-one — один длинный поток, который ТСПУ
+            # подвешивает после ~16 КБ ровно так же, как обычный VLESS. Ради
+            # этого XHTTP и берут: аплинк уходит отдельными запросами, а
+            # даунлинк периодически пересоздаётся.
+            settings["mode"] = "packet-up"
+            settings["extra"] = xhttp.anti_freeze_settings()
             if obfuscate:
                 settings.update(xhttp.generate_obfuscation())
     elif preset.network == NetworkType.grpc:

@@ -26,6 +26,39 @@ from typing import Any, Dict, List
 MODES: List[str] = ["stream-one", "stream-up", "packet-up", "auto"]
 DEFAULT_MODE = "stream-one"
 
+# Дробление соединений — то, ради чего XHTTP и нужен в России.
+#
+# ТСПУ подвешивает TCP-соединение с зарубежным сервером после ~16 КБ. Под
+# REALITY режим «auto» выбирает stream-one, то есть один длинный поток, — и
+# под порог подпадает ровно так же, как обычный VLESS. Поэтому режим задаём
+# явно: packet-up отправляет аплинк отдельными POST'ами, scStreamUpServerSecs
+# периодически пересоздаёт даунлинк, а xmux ограничивает, сколько раз можно
+# переиспользовать одно соединение.
+#
+# Проверено на живых ядрах: эти поля понимают и 25.6.8, и 26.3.27, и 26.7.28
+# (в отличие от маскировочных, несовместимых между версиями), а скорость
+# такая же, как без них.
+ANTI_FREEZE = {
+    "scMaxEachPostBytes": "100000-200000",
+    "scMinPostsIntervalMs": "10-30",
+    "scStreamUpServerSecs": "20-80",
+    "xmux": {
+        "maxConcurrency": "8-16",
+        "maxConnections": 0,
+        "cMaxReuseTimes": "16-32",
+        "hMaxRequestTimes": "400-600",
+        "hKeepAlivePeriod": 0,
+    },
+}
+
+
+def anti_freeze_settings() -> Dict[str, Any]:
+    """Копия параметров дробления — чтобы вызывающий мог их править."""
+    settings = dict(ANTI_FREEZE)
+    settings["xmux"] = dict(ANTI_FREEZE["xmux"])
+    return settings
+
+
 # Поля, которые панель передаёт в xhttpSettings как есть.
 OBFUSCATION_KEYS = (
     "xPaddingBytes",

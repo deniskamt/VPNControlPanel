@@ -91,8 +91,9 @@ def test_xhttp_reality_preset_is_the_first_offer():
     assert first.security == SecurityType.reality
 
     settings = preset_service.build_settings(first, masking_domain="www.microsoft.com")
-    # stream-one, а не auto: замер на живом ядре дал ~78 против ~60 МБ/с.
-    assert settings["mode"] == "stream-one"
+    # packet-up: под REALITY «auto» выбирает stream-one — один длинный поток,
+    # который ТСПУ подвешивает.
+    assert settings["mode"] == "packet-up"
     assert settings["path"].startswith("/")
     assert settings["privateKey"] and settings["publicKey"]
     # Vision живёт только на TCP: на xhttp он ломает клиента.

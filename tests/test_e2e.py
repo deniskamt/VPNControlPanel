@@ -420,8 +420,10 @@ def test_obfuscated_inbound_reaches_both_subscriptions(client, auth, inbound):
     ]
     assert xhttp_profiles, "маскированное подключение обязано быть в JSON-подписке"
     block = xhttp_profiles[0]["outbounds"][0]["streamSettings"]["xhttpSettings"]
-    assert block["mode"] == "stream-one"
+    assert block["mode"] == "packet-up"
     assert block["xPaddingMethod"] == "tokenish"
+    # Дробление соединений должно доехать вместе с маскировкой.
+    assert block["extra"]["scStreamUpServerSecs"]
 
 
 def test_grant_all_button_hands_out_an_older_inbound(client, auth, inbound):
