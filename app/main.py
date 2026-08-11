@@ -21,7 +21,7 @@ from app.core.security import hash_password
 from app.models.admin import Admin
 from app.models.base import Base
 from app.services.worker import start_workers, stop_workers
-from app.web import auth, dashboard, inbounds, logs, nodes, users
+from app.web import auth, dashboard, inbounds, logs, nodes, subscription, users
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -161,4 +161,5 @@ app.include_router(dashboard.router)
 app.include_router(nodes.router)
 app.include_router(users.router)
 app.include_router(inbounds.router)
+app.include_router(subscription.router)
 app.include_router(logs.router)

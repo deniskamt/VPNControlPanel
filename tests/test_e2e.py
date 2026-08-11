@@ -463,3 +463,81 @@ def test_grant_all_button_hands_out_an_older_inbound(client, auth, inbound):
     after = client.get("/api/user/user_grant", headers=auth).json()
     assert "trojan" in after["proxies"]
     assert any(link.startswith("trojan://") for link in after["links"]), after["links"]
+
+
+def test_subscription_page_shows_what_the_client_will_see(client, auth, inbound):
+    """Раздел «Подписка»: строки должны совпадать с тем, что уходит клиенту."""
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_view", "proxies": {"vless": {}},
+              "inbounds": {"vless": ["VLESS-REALITY"]}, "expire": 0},
+    )
+    user = client.get("/api/user/user_view", headers=auth).json()
+
+    page = client.get("/subscription").text
+    assert "Конфигурации в подписке" in page
+    # Сервер и подключение из фикстуры видны в списке.
+    assert "VLESS-REALITY" in page
+    assert "NL-1" in page
+
+
+def test_subscription_page_explains_what_is_missing(client, auth, inbound):
+    """Пустая строка подписки должна объясняться, а не оставлять гадать."""
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_blocked", "proxies": {"vless": {}}, "expire": 0},
+    )
+    blocked = client.get("/api/user/user_blocked", headers=auth).json()
+
+    # Закрываем пользователю единственный сервер — подписка должна опустеть,
+    # а причина появиться в списке «не попало».
+    users_page = client.get("/users").text
+    assert "user_blocked" in users_page
+
+    user_id = None
+    import re
+    for match in re.finditer(r'href="/users/(\d+)"', users_page):
+        candidate = client.get(f"/users/{match.group(1)}").text
+        if "user_blocked" in candidate.split("</h1>")[0]:
+            user_id = match.group(1)
+            break
+    assert user_id, "не нашли карточку пользователя"
+
+    client.post(f"/users/{user_id}/nodes", data={}, follow_redirects=False)
+    page = client.get(f"/subscription?user_id={user_id}").text
+    assert "Не попало в подписку" in page
+    assert "закрыт для этого пользователя" in page
+
+
+def test_subscription_host_can_be_created_and_changes_the_name(client, auth, inbound):
+    """Настройка строки — то, ради чего раздел и нужен."""
+    # Свой пользователь: у соседних тестов доступ к серверу мог быть закрыт.
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_host", "proxies": {"vless": {}},
+              "inbounds": {"vless": ["VLESS-REALITY"]}, "expire": 0},
+    )
+    username = "user_host"
+
+    created = client.post(
+        "/subscription/hosts/create",
+        data={
+            "inbound_id": 1,
+            "node_id": 1,
+            "remark": "{flag} Мой сервер — {protocol}",
+            "address": "cdn.example.com",
+            "port": 2053,
+            "sni": "cdn.example.com",
+        },
+        follow_redirects=False,
+    )
+    assert created.status_code == 303, created.text
+
+    links = client.get(f"/api/user/{username}", headers=auth).json()["links"]
+    assert any("cdn.example.com%3A2053" in link or "cdn.example.com:2053" in link
+               for link in links), links
+    assert any("%D0%9C%D0%BE%D0%B9%20%D1%81%D0%B5%D1%80%D0%B2%D0%B5%D1%80" in link
+               for link in links), "название из настройки должно попасть в ссылку"

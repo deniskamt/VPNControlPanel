@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+{% block title %}Подписка — VPN Panel{% endblock %}
+
+{% macro host_fields(host=None, securities=[]) %}
+<div class="form-grid">
+  <div>
+    <label>Название в приложении</label>
+    <input type="text" name="remark" value="{{ host.remark if host else '{flag} {node}' }}"
+           placeholder="{flag} {node}">
+  </div>
+  <div>
+    <label>Адрес <span class="muted">(пусто — адрес сервера)</span></label>
+    <input type="text" name="address" value="{{ host.address or '' if host else '' }}"
+           placeholder="cdn.example.com">
+  </div>
+  <div>
+    <label>Порт <span class="muted">(пусто — как в подключении)</span></label>
+    <input type="number" name="port" value="{{ host.port or '' if host else '' }}">
+  </div>
+  <div>
+    <label>SNI</label>
+    <input type="text" name="sni" value="{{ host.sni or '' if host else '' }}"
+           placeholder="необязательно">
+  </div>
+  <div>
+    <label>Host-заголовок</label>
+    <input type="text" name="host" value="{{ host.host or '' if host else '' }}"
+           placeholder="необязательно">
+  </div>
+  <div>
+    <label>Путь</label>
+    <input type="text" name="path" value="{{ host.path or '' if host else '' }}"
+           placeholder="необязательно">
+  </div>
+  <div>
+    <label>Шифрование <span class="muted">(пусто — как в подключении)</span></label>
+    <select name="security">
+      <option value="">— как в подключении —</option>
+      {% for item in securities %}
+        <option value="{{ item }}"
+                {% if host and host.security and host.security.value == item %}selected{% endif %}>{{ item }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>ALPN</label>
+    <input type="text" name="alpn" value="{{ host.alpn or '' if host else '' }}"
+           placeholder="h2,http/1.1">
+  </div>
+  <div>
+    <label>Отпечаток TLS</label>
+    <input type="text" name="fingerprint" value="{{ host.fingerprint or '' if host else '' }}"
+           placeholder="firefox">
+  </div>
+  {% if host %}
+  <div>
+    <label>Порядок <span class="muted">(меньше — выше в списке)</span></label>
+    <input type="number" name="sort_order" value="{{ host.sort_order }}">
+  </div>
+  {% endif %}
+</div>
+<div class="form-row" style="margin-top:8px">
+  <div class="checks">
+    <label>
+      <input type="checkbox" name="allowinsecure"
+             {% if host and host.allowinsecure %}checked{% endif %}>
+      не проверять сертификат
+    </label>
+  </div>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Подписка</h1>
+    <div class="sub">Что пользователь увидит в приложении — и как это настроить</div>
+  </div>
+  <a class="btn" href="/settings">Оформление подписки</a>
+</div>
+
+<div class="panel">
+  <header>
+    Предпросмотр
+    <span class="muted" style="font-weight:400">список строится для выбранного пользователя</span>
+  </header>
+  <div class="body">
+    {% if not users %}
+      <div class="hint-box">
+        Пользователей пока нет — добавьте одного на странице
+        <a href="/users">Пользователи</a>, и здесь появится его список конфигураций.
+      </div>
+    {% else %}
+    <form method="get" action="/subscription" class="inline-form">
+      <label>Пользователь</label>
+      <select name="user_id" onchange="this.form.submit()">
+        {% for item in users %}
+          <option value="{{ item.id }}" {% if user and item.id == user.id %}selected{% endif %}>
+            {{ item.username }}
+          </option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit" class="small">Показать</button></noscript>
+    </form>
+
+    {% if subscription_url %}
+    <div class="copy-field" style="margin-top:12px">
+      <input type="text" class="mono" readonly id="sub-url" value="{{ subscription_url }}">
+      <button class="small" data-copy="#sub-url">Копировать</button>
+    </div>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+{% if user %}
+<div class="panel">
+  <header>
+    Конфигурации в подписке
+    <span class="muted" style="font-weight:400">{{ entries | length }} шт. — в этом же порядке их покажет приложение</span>
+  </header>
+  {% if not entries %}
+    <div class="empty">
+      Подписка пустая. Ниже перечислено, что и почему в неё не попало.
+    </div>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Название у клиента</th><th>Сервер</th><th>Подключение</th>
+        <th>Адрес : порт</th><th>Транспорт</th><th>Откуда</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for entry in entries %}
+      <tr>
+        <td><b>{{ entry.remark }}</b></td>
+        <td>{{ flag(entry.node.country) }} {{ entry.node.name }}</td>
+        <td>{{ entry.inbound.tag }}</td>
+        <td class="mono">{{ entry.address }}:{{ entry.port }}</td>
+        <td>{{ entry.network }} / {{ entry.security.value }}</td>
+        <td class="muted">{{ entry.source }}</td>
+        <td>
+          <div class="actions">
+            <button class="small" data-toggle="#entry-{{ entry.key }}">Настроить</button>
+            {% if entry.host %}
+              <form class="inline" method="post" action="/subscription/hosts/{{ entry.host.id }}/toggle">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                <button class="small" type="submit">Скрыть</button>
+              </form>
+              <form class="inline" method="post" action="/subscription/hosts/{{ entry.host.id }}/delete"
+                    data-confirm="Удалить настройку «{{ entry.host.remark }}»? Строка вернётся к виду по умолчанию.">
+                <button class="small danger" type="submit">Сбросить</button>
+              </form>
+            {% else %}
+              <form class="inline" method="post" action="/subscription/inbounds/{{ entry.inbound.id }}/toggle"
+                    data-confirm="Выключить «{{ entry.inbound.tag }}»? Оно исчезнет из подписки у всех пользователей.">
+                <button class="small" type="submit">Выключить у всех</button>
+              </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      <tr id="entry-{{ entry.key }}" hidden>
+        <td colspan="7">
+          {% if entry.host %}
+            <form method="post" action="/subscription/hosts/{{ entry.host.id }}/update">
+              <input type="hidden" name="user_id" value="{{ user.id }}">
+              {{ host_fields(entry.host, securities) }}
+              <button type="submit" class="primary">Сохранить</button>
+            </form>
+          {% else %}
+            <p class="muted" style="margin-top:0">
+              Строка собрана по умолчанию — из адреса сервера и параметров
+              подключения. Чтобы задать своё название, адрес CDN, порт или SNI,
+              создайте для неё настройку:
+            </p>
+            <form method="post" action="/subscription/hosts/create">
+              <input type="hidden" name="user_id" value="{{ user.id }}">
+              <input type="hidden" name="inbound_id" value="{{ entry.inbound.id }}">
+              <input type="hidden" name="node_id" value="{{ entry.node.id }}">
+              {{ host_fields(none, securities) }}
+              <button type="submit" class="primary">Создать настройку</button>
+              <span class="muted" style="margin-left:10px">
+                применится к «{{ entry.inbound.tag }}» на сервере {{ entry.node.name }}
+              </span>
+            </form>
+          {% endif %}
+          {% if entry.link %}
+            <div class="code-block" style="margin-top:12px">
+              <div class="code" id="link-{{ entry.key }}">{{ entry.link }}</div>
+              <button class="small" data-copy="#link-{{ entry.key }}">Копировать ссылку</button>
+            </div>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  <div class="body">
+    <p class="muted" style="margin:0">
+      В названии работают подстановки:
+      {% for token, meaning in remark_tokens %}
+        <span class="mono">{{ token }}</span> — {{ meaning }}{% if not loop.last %}, {% endif %}
+      {% endfor %}.
+      Флаг ставьте первым: приложения рисуют иконку страны по эмодзи в названии.
+    </p>
+  </div>
+</div>
+
+{% if hidden %}
+<div class="panel">
+  <header>
+    Не попало в подписку
+    <span class="muted" style="font-weight:400">и почему именно</span>
+  </header>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Что</th><th>Причина</th></tr></thead>
+      <tbody>
+      {% for row in hidden %}
+        <tr><td>{{ row.what }}</td><td class="muted">{{ row.why }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="panel">
+  <header>Добавить настройку вручную</header>
+  <div class="body">
+    <p class="muted" style="margin-top:0">
+      Например, вторая строка для того же подключения — через CDN, с другим
+      адресом и SNI. Оставьте «все серверы», чтобы настройка применилась
+      к каждому.
+    </p>
+    <form method="post" action="/subscription/hosts/create">
+      <input type="hidden" name="user_id" value="{{ user.id }}">
+      <div class="form-grid">
+        <div>
+          <label>Подключение</label>
+          <select name="inbound_id" required>
+            {% for inbound in inbounds %}
+              <option value="{{ inbound.id }}">{{ inbound.tag }} ({{ inbound.protocol.value }}:{{ inbound.port }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Сервер</label>
+          <select name="node_id">
+            <option value="">— все серверы —</option>
+            {% for node in nodes %}
+              <option value="{{ node.id }}">{{ node.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      {{ host_fields(none, securities) }}
+      <button type="submit" class="primary">Добавить</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

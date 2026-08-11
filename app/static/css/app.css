@@ -314,3 +314,8 @@ details.editor > div { padding: 0 16px 16px; }
 .field-flag { max-width: 210px; }
 .flag-select { font-size: 15px; }
 .flag-select option { font-size: 15px; }
+
+/* Строка выбора над таблицей: подпись и селект в одну линию. */
+.inline-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.inline-form label { margin: 0; color: var(--muted); font-size: 13px; }
+.inline-form select { max-width: 320px; }
