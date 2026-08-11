@@ -228,6 +228,7 @@ def migrate(
     session: Session,
     xray_inbounds: Dict[str, Dict[str, Any]],
     dry_run: bool,
+    limit: Optional[int] = None,
 ) -> None:
     report: Dict[str, int] = {}
 
@@ -369,7 +370,14 @@ def migrate(
     all_inbounds = list(session.scalars(select(Inbound)).all())
     created = skipped = 0
 
-    for row in source.rows("users"):
+    user_rows = source.rows("users")
+    if limit:
+        # Для тестовой панели вся база обычно не нужна: хватает нескольких
+        # аккаунтов, чтобы посмотреть на подписки и ссылки.
+        user_rows = user_rows[:limit]
+        print(f"  ограничение: переносим только первых {limit}")
+
+    for row in user_rows:
         username = row.get("username")
         if not username:
             continue
@@ -490,6 +498,12 @@ def main() -> None:
         action="store_true",
         help="Прогнать без записи, только показать, что будет перенесено",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Перенести только первых N пользователей — для тестовой панели",
+    )
     args = parser.parse_args()
 
     print(f"Источник: {args.source}")
@@ -504,7 +518,7 @@ def main() -> None:
     Base.metadata.create_all(target_engine)
 
     with Session(target_engine) as session:
-        migrate(source, session, xray_inbounds, args.dry_run)
+        migrate(source, session, xray_inbounds, args.dry_run, args.limit)
 
 
 if __name__ == "__main__":
