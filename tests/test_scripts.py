@@ -1,0 +1,52 @@
+"""Проверки скриптов установки и переезда.
+
+Ошибка в bash-скрипте обнаруживается на боевом сервере в самый неподходящий
+момент, поэтому хотя бы синтаксис и поведение без аргументов проверяем здесь.
+"""
+
+import subprocess
+from pathlib import Path
+
+import pytest
+
+SCRIPTS = sorted((Path(__file__).resolve().parent.parent / "scripts").glob("*.sh"))
+
+
+@pytest.mark.parametrize("script", SCRIPTS, ids=lambda path: path.name)
+def test_script_syntax_is_valid(script: Path) -> None:
+    result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "script", ["setup_domain.sh", "restore_panel.sh"]
+)
+def test_script_without_arguments_stops(script: str) -> None:
+    """Скрипты переезда без обязательного аргумента не должны ничего делать."""
+    path = Path(__file__).resolve().parent.parent / "scripts" / script
+    result = subprocess.run(["bash", str(path)], capture_output=True, text=True)
+    assert result.returncode == 1
+
+
+def test_setup_domain_puts_every_domain_into_nginx_and_certificate() -> None:
+    """Ключ --also нужен при смене домена: старые ссылки подписок ведут на
+    прежний адрес, и панель должна отвечать на обоих."""
+    text = (Path(__file__).resolve().parent.parent / "scripts" / "setup_domain.sh").read_text()
+    assert "--also) EXTRA_DOMAINS+=" in text
+    # Имена сервера в nginx и список -d для certbot берутся из одного списка.
+    assert 'SERVER_NAMES="${ALL_DOMAINS[*]}"' in text
+    assert 'for name in "${ALL_DOMAINS[@]}"; do CERTBOT_ARGS+=(-d "$name"); done' in text
+
+
+def test_restore_keeps_local_database_and_carries_secrets() -> None:
+    """Из архива приезжают ключи подписок, а адрес базы остаётся местный —
+    перепутать эти два списка значит либо сломать ссылки, либо базу."""
+    text = (Path(__file__).resolve().parent.parent / "scripts" / "restore_panel.sh").read_text()
+    for line in (
+        'set_env DATABASE_URL "$LOCAL_DB"',
+        'set_env PANEL_URL "$LOCAL_PANEL"',
+        'set_env SUBSCRIPTION_BASE_URL "$LOCAL_SUB"',
+    ):
+        assert line in text
+    # Перед заменой базы делается снимок — без него откатываться будет нечем.
+    assert "vpn-panel-before-restore" in text

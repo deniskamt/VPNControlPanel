@@ -2,8 +2,8 @@
 # Перевод панели на домен и HTTPS: nginx, сертификат Let's Encrypt,
 # правка .env и systemd-юнита.
 #
-#   bash scripts/setup_domain.sh vixar.fun
-#   bash scripts/setup_domain.sh vixar.fun --sub nexlovpn.online --email me@example.com
+#   bash scripts/setup_domain.sh sub.nexlovpn.online
+#   bash scripts/setup_domain.sh sub.nexlovpn.online --also nexlovpn.online --email me@example.com
 #
 # Что делает:
 #   * ставит nginx и certbot;
@@ -14,6 +14,9 @@
 #
 # Ключи:
 #   --sub <домен>   домен для ссылок подписок (по умолчанию тот же)
+#   --also <домен>  ещё один домен, на который панель тоже должна отвечать;
+#                   можно повторять. Нужен при смене домена: старые ссылки
+#                   подписок ведут на прежний адрес и должны открываться
 #   --email <адрес> адрес для Let's Encrypt (иначе выпуск без него)
 #   --no-cert       только nginx, без сертификата (для проверки)
 #   --staging       тестовый центр сертификации Let's Encrypt
@@ -30,10 +33,12 @@ SUB_DOMAIN=""
 EMAIL=""
 NO_CERT=0
 STAGING=0
+EXTRA_DOMAINS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --sub) SUB_DOMAIN="$2"; shift 2 ;;
+    --also) EXTRA_DOMAINS+=("$2"); shift 2 ;;
     --email) EMAIL="$2"; shift 2 ;;
     --no-cert) NO_CERT=1; shift ;;
     --staging) STAGING=1; shift ;;
@@ -55,11 +60,27 @@ if [[ ! -f "$ENV_FILE" ]]; then
 fi
 
 SUB_DOMAIN="${SUB_DOMAIN:-$DOMAIN}"
-APP_PORT="$(sed -n 's/.*--port \([0-9]*\).*/\1/p' "$UNIT_FILE" 2>/dev/null | head -1)"
+APP_PORT="$(sed -n 's/.*--port \([0-9]*\).*/\1/p' "$UNIT_FILE" 2>/dev/null | head -1 || true)"
 APP_PORT="${APP_PORT:-8000}"
+
+# Все имена, на которые должен отвечать nginx и которые попадут в сертификат.
+ALL_DOMAINS=("$DOMAIN")
+add_domain() {
+  local candidate="$1" known
+  [[ -z "$candidate" ]] && return 0
+  for known in "${ALL_DOMAINS[@]}"; do
+    [[ "$known" == "$candidate" ]] && return 0
+  done
+  ALL_DOMAINS+=("$candidate")
+}
+add_domain "$SUB_DOMAIN"
+for extra in "${EXTRA_DOMAINS[@]:-}"; do add_domain "$extra"; done
 
 echo "==> Домен панели:    $DOMAIN"
 echo "==> Домен подписок:  $SUB_DOMAIN"
+if [[ ${#ALL_DOMAINS[@]} -gt 1 ]]; then
+  echo "==> Отвечаем также на: ${ALL_DOMAINS[*]}"
+fi
 echo "==> Панель работает на порту $APP_PORT"
 
 # --- Проверки до изменений -------------------------------------------------
@@ -95,18 +116,20 @@ EOF
   exit 1
 fi
 
-echo "==> Проверяем, что домен указывает на этот сервер"
+echo "==> Проверяем, что домены указывают на этот сервер"
 SERVER_IP="$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
-DOMAIN_IP="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1; exit}')"
-if [[ -z "$DOMAIN_IP" ]]; then
-  echo "  ВНИМАНИЕ: $DOMAIN пока никуда не резолвится — сертификат не выпустится."
-elif [[ "$DOMAIN_IP" != "$SERVER_IP" ]]; then
-  echo "  ВНИМАНИЕ: $DOMAIN указывает на $DOMAIN_IP, а сервер — $SERVER_IP."
-  echo "  Если домен за Cloudflare с оранжевым облаком, для выпуска сертификата"
-  echo "  переключите запись в «DNS only» (серое облако)."
-else
-  echo "  $DOMAIN → $DOMAIN_IP, совпадает с адресом сервера"
-fi
+for name in "${ALL_DOMAINS[@]}"; do
+  DOMAIN_IP="$(getent ahostsv4 "$name" 2>/dev/null | awk '{print $1; exit}')"
+  if [[ -z "$DOMAIN_IP" ]]; then
+    echo "  ВНИМАНИЕ: $name пока никуда не резолвится — сертификат не выпустится."
+  elif [[ "$DOMAIN_IP" != "$SERVER_IP" ]]; then
+    echo "  ВНИМАНИЕ: $name указывает на $DOMAIN_IP, а сервер — $SERVER_IP."
+    echo "  Если домен за Cloudflare с оранжевым облаком, для выпуска сертификата"
+    echo "  переключите запись в «DNS only» (серое облако)."
+  else
+    echo "  $name → $DOMAIN_IP, совпадает с адресом сервера"
+  fi
+done
 
 # --- Nginx -----------------------------------------------------------------
 
@@ -115,8 +138,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx certbot python3-certbot-nginx >/dev/null
 
-SERVER_NAMES="$DOMAIN"
-[[ "$SUB_DOMAIN" != "$DOMAIN" ]] && SERVER_NAMES="$DOMAIN $SUB_DOMAIN"
+SERVER_NAMES="${ALL_DOMAINS[*]}"
 
 # На серверах с выключенным IPv6 директива listen [::] роняет nginx целиком,
 # поэтому добавляем её только когда стек действительно есть.
@@ -167,8 +189,8 @@ if [[ "$NO_CERT" == "1" ]]; then
   echo "==> Сертификат пропущен (--no-cert)"
 else
   echo "==> Получаем сертификат Let's Encrypt"
-  CERTBOT_ARGS=(--nginx --non-interactive --agree-tos --redirect -d "$DOMAIN")
-  [[ "$SUB_DOMAIN" != "$DOMAIN" ]] && CERTBOT_ARGS+=(-d "$SUB_DOMAIN")
+  CERTBOT_ARGS=(--nginx --non-interactive --agree-tos --redirect)
+  for name in "${ALL_DOMAINS[@]}"; do CERTBOT_ARGS+=(-d "$name"); done
   if [[ -n "$EMAIL" ]]; then
     CERTBOT_ARGS+=(-m "$EMAIL")
   else
@@ -229,19 +251,26 @@ CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
   "${SCHEME}://${DOMAIN}/healthz" 2>/dev/null || true)"
 CODE="${CODE:-000}"
 
+OTHER_NAMES=""
+if [[ ${#ALL_DOMAINS[@]} -gt 1 ]]; then
+  OTHER_NAMES="Отвечает также на: ${ALL_DOMAINS[*]}
+          (старые ссылки подписок на этих доменах продолжают открываться)"
+fi
+
 cat <<EOF
 
 ======================================================================
 Панель:   ${SCHEME}://${DOMAIN}          (проверка /healthz: ${CODE})
 Подписки: ${SCHEME}://${SUB_DOMAIN}/<путь>/<token>
+${OTHER_NAMES}
 
 Что стоит сделать дальше:
   * если домен за Cloudflare, вернуть оранжевое облако можно, но режим SSL
     должен быть Full (strict) — иначе будет цикл редиректов;
   * адрес серверов для клиентов лучше оставить по IP или завести отдельную
     запись без проксирования: VPN-трафик через Cloudflare не ходит;
-  * старые ссылки подписок останутся рабочими, только если домен подписок
-    не менялся.
+  * ссылки, выданные раньше, ведут на прежний домен: он должен либо остаться
+    в списке выше (ключ --also), либо проксировать /<путь>/ сюда.
 
 Логи:     journalctl -u vpn-panel -f
 Nginx:    nginx -t && systemctl reload nginx

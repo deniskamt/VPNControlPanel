@@ -800,6 +800,18 @@ PANEL_URL=https://panel.example.com bash install_agent.sh
 **Резервные копии.** Ценна только база: в ней ключи пользователей, при её
 потере придётся перевыпускать все подписки.
 
+Одной командой — база вместе с ключами из `.env`:
+
+```bash
+cd /opt/vpn-panel && bash scripts/backup_panel.sh
+```
+
+Получится `/root/vpn-panel-<хост>-<дата>.tar.gz`; развернуть его на другом
+сервере — `bash scripts/restore_panel.sh <архив>`. Этой же парой делается
+переезд панели, см. **[GOLIVE.md](GOLIVE.md)**.
+
+Только база, без `.env`:
+
 ```bash
 su - postgres -c "pg_dump vpnpanel" | gzip > /root/vpnpanel-$(date +%F).sql.gz
 ```
