@@ -372,32 +372,42 @@ ufw deny 8443/tcp
 показывает клиент. Боевой Marzban при этом не трогается вообще — читается
 только копия его базы.
 
-**1. Снять копию базы с боевого сервера.** Marzban на SQLite (по умолчанию):
+Дальше два разных сервера. Команды **не** выполняются подряд в одном
+терминале: сначала всё на сервере Marzban, потом всё на сервере панели.
+
+#### Шаг 1 — на сервере Marzban
+
+Снять копию базы (боевой Marzban при этом продолжает работать) и отправить её
+на панель. `panel.example.com` замените на адрес своей панели:
 
 ```bash
-# на сервере Marzban
+apt install -y sqlite3                       # если ещё нет
 sqlite3 /var/lib/marzban/db.sqlite3 ".backup /tmp/marzban-copy.sqlite3"
+ls -lh /tmp/marzban-copy.sqlite3             # файл должен появиться
 
-# на тестовой панели
-scp root@<сервер Marzban>:/tmp/marzban-copy.sqlite3 /opt/vpn-panel/marzban.sqlite3
-scp root@<сервер Marzban>:/var/lib/marzban/xray_config.json /opt/vpn-panel/
+scp /tmp/marzban-copy.sqlite3     root@panel.example.com:/opt/vpn-panel/marzban.sqlite3
+scp /var/lib/marzban/xray_config.json root@panel.example.com:/opt/vpn-panel/
 ```
 
-Marzban на MySQL:
+Если Marzban на MySQL, вместо первой команды:
 
 ```bash
-# на сервере Marzban
 mysqldump -u root -p marzban | gzip > /tmp/marzban.sql.gz
-# на тестовой панели: развернуть в локальный MySQL и указать его в --source
 ```
+
+— и разверните дамп в MySQL уже на панели, а в `--source` укажите
+`mysql+pymysql://...`.
 
 Копия базы — это ключи всех пользователей. Держите её только на время
-проверки и потом удалите.
+проверки и потом удалите с обоих серверов.
 
-**2. Прогнать вхолостую.**
+#### Шаг 2 — на сервере панели
 
 ```bash
+ssh root@panel.example.com
 cd /opt/vpn-panel
+ls -lh marzban.sqlite3                       # файл доехал?
+
 .venv/bin/pip install -r requirements-migrate.txt
 
 .venv/bin/python scripts/migrate_from_marzban.py \
@@ -406,12 +416,16 @@ cd /opt/vpn-panel
     --dry-run
 ```
 
+Четыре слеша в `sqlite:////` не опечатка: три от схемы плюс корневой слеш
+абсолютного пути.
+
 Скрипт ничего не пишет и печатает, что перенесётся, а также строку
 `SUBSCRIPTION_SECRET=...` — секрет подписи из Marzban.
 
-**3. Прописать секрет и перенести.** Без совпадающего секрета ссылки
-подписок открываться не будут — на тестовой панели это первое, что стоит
-проверить.
+#### Шаг 3 — там же, на сервере панели
+
+Прописать секрет и перенести. Без совпадающего секрета ссылки подписок
+открываться не будут — на тестовой панели это первое, что стоит проверить.
 
 ```bash
 nano .env                 # SUBSCRIPTION_SECRET=<из вывода скрипта>
@@ -426,7 +440,7 @@ systemctl restart vpn-panel
 `--limit 20` берёт только первых двадцать пользователей: для проверки этого
 достаточно, а база остаётся обозримой. Без него переносятся все.
 
-**4. Что проверить в панели.**
+#### Шаг 4 — что проверить в панели
 
 | Проверка | Как |
 | --- | --- |
