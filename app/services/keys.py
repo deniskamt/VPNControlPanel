@@ -7,7 +7,7 @@
 """
 
 import secrets
-from base64 import urlsafe_b64encode
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from typing import Tuple
 
 from cryptography.hazmat.primitives import serialization
@@ -33,6 +33,34 @@ def generate_reality_keypair() -> Tuple[str, str]:
         encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
     )
     return _b64(private_raw), _b64(public_raw)
+
+
+def public_key_from_private(private_key: str) -> str:
+    """Публичный ключ REALITY по приватному.
+
+    В серверном конфиге Xray публичного ключа нет — он нужен только клиенту.
+    При переносе из другой панели его иначе пришлось бы получать на сервере
+    командой `xray x25519 -i <privateKey>` и вписывать руками для каждого
+    подключения; здесь то же самое считается на месте.
+    """
+    raw = private_key.strip()
+    if not raw:
+        return ""
+    try:
+        decoded = urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+        public_raw = (
+            X25519PrivateKey.from_private_bytes(decoded)
+            .public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+        )
+    except (ValueError, TypeError):
+        # Ключ не в том формате — пусть администратор впишет вручную,
+        # молча подставлять мусор нельзя.
+        return ""
+    return _b64(public_raw)
 
 
 def generate_short_id(length: int = 8) -> str:

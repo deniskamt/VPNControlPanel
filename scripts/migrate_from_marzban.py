@@ -49,6 +49,8 @@ from sqlalchemy import MetaData, Table, create_engine, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
+from app.services.keys import public_key_from_private  # noqa: E402
+from app.services.presets import MIN_CLIENT_VERSION  # noqa: E402
 from app.models import (  # noqa: E402
     Admin,
     Base,
@@ -136,9 +138,13 @@ def _inbound_from_xray(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         options["privateKey"] = reality.get("privateKey", "")
         options["shortIds"] = reality.get("shortIds") or [""]
         options["xver"] = reality.get("xver", 0)
-        # publicKey в серверном конфиге не хранится — его надо вписать руками,
-        # иначе клиенты не подключатся по REALITY.
-        options["publicKey"] = ""
+        # publicKey в серверном конфиге Xray не хранится — он нужен только
+        # клиенту. Раньше его приходилось получать на сервере командой
+        # `xray x25519 -i` и вписывать руками для каждого подключения; теперь
+        # он считается из приватного прямо здесь.
+        options["publicKey"] = public_key_from_private(options["privateKey"])
+        # Свежие ядра иначе пускают только клиентов не старше себя.
+        options.setdefault("minClientVer", MIN_CLIENT_VERSION)
 
     clients = (raw.get("settings") or {}).get("clients") or []
     if clients:
@@ -223,12 +229,47 @@ def _enum_value(value: Any, default: str) -> str:
     return str(value)
 
 
+def write_secret_to_env(env_path: Path, secret: str) -> None:
+    """Прописать SUBSCRIPTION_SECRET в .env, не трогая остальные строки.
+
+    Без совпадающего секрета ссылки, выданные Marzban, не открываются, а
+    редактировать .env руками на свежем сервере бывает нечем — там может не
+    оказаться даже nano.
+    """
+    if not secret:
+        print("  Секрет пуст — записывать нечего.")
+        return
+    if not env_path.exists():
+        print(f"  Нет файла {env_path} — впишите секрет вручную.")
+        return
+
+    lines = env_path.read_text(encoding="utf-8").splitlines()
+    replaced = False
+    for index, line in enumerate(lines):
+        if line.startswith("SUBSCRIPTION_SECRET="):
+            if line.strip() == f"SUBSCRIPTION_SECRET={secret}":
+                print(f"  В {env_path} секрет уже такой — ничего не меняем.")
+                return
+            lines[index] = f"SUBSCRIPTION_SECRET={secret}"
+            replaced = True
+            break
+    if not replaced:
+        lines.append(f"SUBSCRIPTION_SECRET={secret}")
+
+    backup = env_path.with_suffix(env_path.suffix + ".bak")
+    backup.write_text(env_path.read_text(encoding="utf-8"), encoding="utf-8")
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"  Секрет записан в {env_path} (копия прежнего — {backup}).")
+    print("  Перезапустите панель: systemctl restart vpn-panel")
+
+
 def migrate(
     source: MarzbanSource,
     session: Session,
     xray_inbounds: Dict[str, Dict[str, Any]],
     dry_run: bool,
     limit: Optional[int] = None,
+    env_path: Optional[Path] = None,
 ) -> None:
     report: Dict[str, int] = {}
 
@@ -239,6 +280,8 @@ def migrate(
         secret = jwt_rows[0].get("secret_key", "")
         print("  Найден секрет Marzban. Пропишите его в .env панели:\n")
         print(f"    SUBSCRIPTION_SECRET={secret}\n")
+        if env_path and not dry_run:
+            write_secret_to_env(env_path, secret)
         if settings.SUBSCRIPTION_SECRET and settings.SUBSCRIPTION_SECRET != secret:
             print(
                 "  ВНИМАНИЕ: в .env панели указан ДРУГОЙ секрет — старые ссылки "
@@ -320,15 +363,26 @@ def migrate(
             "  Параметры не заданы (нет --xray-config): подключения созданы "
             "выключенными, заполните порт и ключи в панели."
         )
-    elif any(
-        inbound.settings.get("privateKey") and not inbound.settings.get("publicKey")
-        for inbound in inbound_by_tag.values()
-        if inbound.settings
-    ):
-        print(
-            "  Для REALITY впишите publicKey в параметрах подключения "
-            "(на сервере: xray x25519 -i <privateKey>)."
+    else:
+        derived = sum(
+            1
+            for inbound in inbound_by_tag.values()
+            if (inbound.settings or {}).get("publicKey")
+            and (inbound.settings or {}).get("privateKey")
         )
+        if derived:
+            print(f"  publicKey для REALITY вычислен из приватного: {derived}")
+        stuck = [
+            inbound.tag
+            for inbound in inbound_by_tag.values()
+            if (inbound.settings or {}).get("privateKey")
+            and not (inbound.settings or {}).get("publicKey")
+        ]
+        if stuck:
+            print(
+                "  Не удалось вычислить publicKey (ключ в непонятном формате): "
+                + ", ".join(stuck)
+            )
 
     # 4. Хосты --------------------------------------------------------------
     print("\n[4/6] Хосты ссылок")
@@ -504,6 +558,14 @@ def main() -> None:
         default=None,
         help="Перенести только первых N пользователей — для тестовой панели",
     )
+    parser.add_argument(
+        "--write-env",
+        nargs="?",
+        const=".env",
+        default=None,
+        metavar="ПУТЬ",
+        help="Записать SUBSCRIPTION_SECRET прямо в .env (по умолчанию ./.env)",
+    )
     args = parser.parse_args()
 
     print(f"Источник: {args.source}")
@@ -518,7 +580,14 @@ def main() -> None:
     Base.metadata.create_all(target_engine)
 
     with Session(target_engine) as session:
-        migrate(source, session, xray_inbounds, args.dry_run, args.limit)
+        migrate(
+            source,
+            session,
+            xray_inbounds,
+            args.dry_run,
+            args.limit,
+            Path(args.write_env) if args.write_env else None,
+        )
 
 
 if __name__ == "__main__":

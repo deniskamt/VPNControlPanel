@@ -228,3 +228,19 @@ def test_no_warning_on_good_and_on_cdn_setups():
         ProxyType.vless, NetworkType.xhttp, SecurityType.none, {"host": "cdn.example.com"}
     )
     assert preset_service.legacy_warning(behind_cdn) == ""
+
+
+def test_public_key_can_be_derived_from_private():
+    """При переносе из Marzban публичного ключа нет — он считается из приватного.
+
+    Сверено с выводом самого Xray 26.3.27: значения совпадают.
+    """
+    from app.services.keys import public_key_from_private
+
+    private, public = generate_reality_keypair()
+    assert public_key_from_private(private) == public
+
+    # Мусор не должен превращаться в правдоподобный ключ: пусть лучше поле
+    # останется пустым и администратор увидит предупреждение.
+    assert public_key_from_private("не ключ вовсе") == ""
+    assert public_key_from_private("") == ""
