@@ -425,11 +425,18 @@ def migrate(
     created = skipped = 0
 
     user_rows = source.rows("users")
-    if limit:
+    total_in_source = len(user_rows)
+    if limit and limit < total_in_source:
         # Для тестовой панели вся база обычно не нужна: хватает нескольких
         # аккаунтов, чтобы посмотреть на подписки и ссылки.
         user_rows = user_rows[:limit]
-        print(f"  ограничение: переносим только первых {limit}")
+        print(
+            f"  в базе Marzban всего {total_in_source}, "
+            f"из-за --limit берём первых {limit}"
+        )
+        print("  чтобы перенести всех — тот же запуск без --limit")
+    else:
+        print(f"  в базе Marzban всего {total_in_source}")
 
     for row in user_rows:
         username = row.get("username")
