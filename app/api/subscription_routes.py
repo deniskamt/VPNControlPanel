@@ -132,8 +132,10 @@ async def subscription_info(
             "username": user.username,
             "status": user.status.value,
             "used_traffic": user.used_traffic,
-            "data_limit": user.data_limit,
-            "expire": user.expire,
+            # Ноль вместо null — как отдавал Marzban: клиенты считают эти
+            # поля числами (см. serialize_user в app/api/compat.py).
+            "data_limit": user.data_limit or 0,
+            "expire": user.expire or 0,
             "subscription_url": settings.subscription_url(
                 user_service.subscription_token(user)
             ),

@@ -155,6 +155,32 @@ def test_bot_flow_create_user(client, auth, inbound):
     assert data["links"][0].startswith("vless://")
 
 
+def test_unlimited_user_reports_zeroes_not_nulls(client, auth):
+    """Боты считают expire и data_limit числами: `expire - now`, `used /
+    data_limit`. Marzban отдавал в этих полях ноль, и null вместо него ронял
+    бота на ровном месте — «unsupported operand type(s) for -: NoneType»."""
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_forever", "proxies": {"vless": {}}},
+    )
+
+    user = client.get("/api/user/user_forever", headers=auth).json()
+    assert user["expire"] == 0
+    assert user["data_limit"] == 0
+
+    listed = client.get("/api/users", headers=auth).json()["users"]
+    forever = next(item for item in listed if item["username"] == "user_forever")
+    assert forever["expire"] == 0 and forever["data_limit"] == 0
+
+    token = user["subscription_url"].rsplit("/", 1)[-1]
+    info = client.get(f"/c/{token}/info").json()
+    assert info["expire"] == 0 and info["data_limit"] == 0
+
+    by_token = client.get("/api/sub", headers=auth, params={"token": token}).json()
+    assert by_token["expire"] == 0
+
+
 def test_duplicate_user_rejected(client, auth):
     response = client.post(
         "/api/user", headers=auth, json={"username": "user_12345", "proxies": {"vless": {}}}

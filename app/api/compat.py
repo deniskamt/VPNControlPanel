@@ -79,9 +79,12 @@ async def serialize_user(session: AsyncSession, user: User) -> Dict[str, Any]:
         "status": user.status.value,
         "used_traffic": user.used_traffic,
         "lifetime_used_traffic": user.lifetime_used_traffic,
-        "data_limit": user.data_limit,
+        # В базе «без срока» и «без лимита» — это NULL, но Marzban отдавал
+        # в API ноль, и клиенты считают эти поля числами: json null роняет
+        # их на первой же арифметике (expire - now, used / data_limit).
+        "data_limit": user.data_limit or 0,
         "data_limit_reset_strategy": user.data_limit_reset_strategy.value,
-        "expire": user.expire,
+        "expire": user.expire or 0,
         "created_at": _iso(user.created_at),
         "note": user.note,
         "online_at": _iso(user.online_at),
@@ -471,5 +474,5 @@ async def subscription_by_token(
         ),
         "username": user.username,
         "status": user.status.value,
-        "expire": user.expire,
+        "expire": user.expire or 0,
     }
