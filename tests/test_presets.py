@@ -92,7 +92,7 @@ def test_xhttp_reality_preset_is_the_first_offer():
 
     settings = preset_service.build_settings(first, masking_domain="www.microsoft.com")
     # packet-up: под REALITY «auto» выбирает stream-one — один длинный поток,
-    # который ТСПУ подвешивает.
+    # который зависает после ~16 КБ.
     assert settings["mode"] == "packet-up"
     assert settings["path"].startswith("/")
     assert settings["privateKey"] and settings["publicKey"]

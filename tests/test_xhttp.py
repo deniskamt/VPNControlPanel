@@ -44,7 +44,7 @@ def make_user(inbounds):
 
 def test_xhttp_splits_connections_instead_of_one_long_stream():
     """Под REALITY «auto» выбирает stream-one — тот самый длинный поток,
-    который ТСПУ подвешивает. Значит, режим надо задавать явно."""
+    который зависает после ~16 КБ. Значит, режим надо задавать явно."""
     for key in ("vless_reality_xhttp", "vless_xhttp_cdn"):
         settings = preset_service.build_settings(preset_service.PRESETS_BY_KEY[key])
         assert settings["mode"] == "packet-up", key
