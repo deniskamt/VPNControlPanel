@@ -43,6 +43,11 @@ class User(Base, TimestampMixin):
     used_traffic: Mapped[int] = mapped_column(BigInteger, default=0)
     lifetime_used_traffic: Mapped[int] = mapped_column(BigInteger, default=0)
     data_limit: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    # Когда трафик обнуляли в последний раз. Пусто — значит ещё ни разу,
+    # и отсчёт периода идёт от создания пользователя.
+    traffic_reset_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
     data_limit_reset_strategy: Mapped[DataLimitResetStrategy] = mapped_column(
         Enum(DataLimitResetStrategy, native_enum=False, length=16),
         default=DataLimitResetStrategy.no_reset,

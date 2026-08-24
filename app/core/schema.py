@@ -21,6 +21,7 @@ COLUMNS: List[Tuple[str, str, str]] = [
     ("users", "device_limit", "INTEGER"),
     ("users", "device_count", "INTEGER DEFAULT 0 NOT NULL"),
     ("users", "devices_seen_at", "TIMESTAMP WITHOUT TIME ZONE"),
+    ("users", "traffic_reset_at", "TIMESTAMP WITHOUT TIME ZONE"),
     ("hosts", "security", "VARCHAR(16)"),
     ("nodes", "agent_version", "INTEGER"),
 ]

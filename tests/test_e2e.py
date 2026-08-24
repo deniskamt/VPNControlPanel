@@ -567,3 +567,107 @@ def test_subscription_host_can_be_created_and_changes_the_name(client, auth, inb
                for link in links), links
     assert any("%D0%9C%D0%BE%D0%B9%20%D1%81%D0%B5%D1%80%D0%B2%D0%B5%D1%80" in link
                for link in links), "название из настройки должно попасть в ссылку"
+
+
+def _in_own_loop(coro_factory):
+    """Выполнить работу с базой в отдельном движке и цикле.
+
+    Пул основного движка принадлежит циклу TestClient — брать из него
+    соединения через asyncio.run нельзя, asyncpg на этом ломается.
+    """
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.core.config import settings
+
+    async def run():
+        engine = create_async_engine(settings.DATABASE_URL)
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with maker() as session:
+                return await coro_factory(session)
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(run())
+
+
+def test_traffic_resets_by_strategy_and_unblocks_user(client, auth):
+    """Лимит без сброса — мина: трафик копится вечно, и при очередном
+    продлении человек навсегда остаётся limited и без связи на всех серверах.
+    Marzban обнулял счётчик раз в период, панель должна так же."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.models import User
+    from app.services.node_manager import apply_traffic_resets, enforce_limits
+
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_heavy", "proxies": {"vless": {}},
+              "data_limit": 200, "data_limit_reset_strategy": "month"},
+    )
+
+    def потратить(used: int, дней_назад: int):
+        async def работа(session):
+            user = await session.scalar(
+                select(User).where(User.username == "user_heavy")
+            )
+            user.used_traffic = used
+            user.traffic_reset_at = datetime.utcnow() - timedelta(days=дней_назад)
+            await session.commit()
+        _in_own_loop(работа)
+
+    def прогнать():
+        async def работа(session):
+            сброшено = await apply_traffic_resets(session)
+            await enforce_limits(session)
+            return сброшено
+        return _in_own_loop(работа)
+
+    # Лимит потрачен, но месяц ещё не прошёл — сброса нет, доступ закрыт.
+    потратить(used=250, дней_назад=10)
+    assert прогнать() == 0
+    assert client.get("/api/user/user_heavy", headers=auth).json()["status"] == "limited"
+
+    # Прошёл месяц: трафик обнуляется, накопленное уходит в пожизненный
+    # счётчик, а пользователь возвращается в строй сам.
+    потратить(used=250, дней_назад=31)
+    assert прогнать() == 1
+
+    user = client.get("/api/user/user_heavy", headers=auth).json()
+    assert user["used_traffic"] == 0
+    assert user["lifetime_used_traffic"] >= 250
+    assert user["status"] == "active"
+
+
+def test_no_reset_strategy_leaves_traffic_alone(client, auth):
+    """Стратегия no_reset (по умолчанию) ничего не обнуляет."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.models import User
+    from app.services.node_manager import apply_traffic_resets
+
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_forever_traffic", "proxies": {"vless": {}}},
+    )
+
+    async def работа(session):
+        user = await session.scalar(
+            select(User).where(User.username == "user_forever_traffic")
+        )
+        user.used_traffic = 999
+        user.traffic_reset_at = datetime.utcnow() - timedelta(days=400)
+        await session.commit()
+        return await apply_traffic_resets(session)
+
+    assert _in_own_loop(работа) == 0
+    assert client.get("/api/user/user_forever_traffic",
+                      headers=auth).json()["used_traffic"] == 999

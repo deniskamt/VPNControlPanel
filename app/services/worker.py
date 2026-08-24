@@ -8,6 +8,7 @@ from loguru import logger
 from app.core.config import settings
 from app.core.database import session_scope
 from app.services.node_manager import (
+    apply_traffic_resets,
     enforce_limits,
     load_nodes,
     load_users,
@@ -64,6 +65,12 @@ async def _enforce_loop() -> None:
     while True:
         try:
             async with session_scope() as session:
+                # Сначала сброс трафика по стратегии, потом проверка лимитов:
+                # иначе тот, кому только что обнулили счётчик, успел бы
+                # схватить статус limited.
+                reset = await apply_traffic_resets(session)
+                if reset:
+                    logger.info(f"Сброшен трафик у пользователей: {reset}")
                 changed = await enforce_limits(session)
                 if changed:
                     logger.info(f"Обновлены статусы пользователей: {changed}")

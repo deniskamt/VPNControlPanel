@@ -8,7 +8,7 @@
   * при смене статуса ноды пишет в журнал и шлёт уведомление в Telegram.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Sequence
 
 from loguru import logger
@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.access import UserNodeAccess
-from app.models.enums import NodeStatus, UserStatus
+from app.models.enums import DataLimitResetStrategy, NodeStatus, UserStatus
 from app.models.node import Node
 from app.models.usage import NodeUsage, NodeUserUsage, SystemUsage
 from app.models.user import User
@@ -347,6 +347,61 @@ async def poll_node(session: AsyncSession, node: Node) -> None:
         session, node, stats.get("users") or {}, stats.get("total") or {}
     )
     await session.commit()
+
+
+# Сколько длится период сброса трафика. Как в Marzban: срок считается от
+# прошлого сброса, а если его не было — от создания пользователя.
+_RESET_PERIODS = {
+    DataLimitResetStrategy.day: timedelta(days=1),
+    DataLimitResetStrategy.week: timedelta(days=7),
+    DataLimitResetStrategy.month: timedelta(days=30),
+    DataLimitResetStrategy.year: timedelta(days=365),
+}
+
+
+async def apply_traffic_resets(session: AsyncSession) -> int:
+    """Обнулить трафик тем, у кого подошёл срок по стратегии сброса.
+
+    Без этого счётчик копится вечно, и пользователь с лимитом рано или поздно
+    упирается в него навсегда: продление срока подписки трафик не возвращает,
+    и человек остаётся без связи на всех серверах. Именно так ведёт себя
+    Marzban, откуда пришли и стратегии, и лимиты.
+    """
+    now = datetime.utcnow()
+    changed = 0
+
+    result = await session.execute(
+        select(User).where(
+            User.data_limit_reset_strategy != DataLimitResetStrategy.no_reset
+        )
+    )
+    for user in result.scalars().all():
+        period = _RESET_PERIODS.get(user.data_limit_reset_strategy)
+        if not period:
+            continue
+
+        since = user.traffic_reset_at or user.created_at or now
+        if now - since < period:
+            continue
+
+        if user.used_traffic:
+            # Накопленное не теряем: оно уходит в пожизненный счётчик, как
+            # это делает Marzban.
+            user.lifetime_used_traffic = (user.lifetime_used_traffic or 0) + user.used_traffic
+            user.used_traffic = 0
+        user.traffic_reset_at = now
+        changed += 1
+        await log_action(
+            session,
+            action="user.traffic_reset",
+            target=user.username,
+            target_type="user",
+            message=f"сброс трафика ({user.data_limit_reset_strategy.value})",
+        )
+
+    if changed:
+        await session.commit()
+    return changed
 
 
 async def enforce_limits(session: AsyncSession) -> int:
