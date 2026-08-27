@@ -32,8 +32,8 @@ from app.models.user import User
 DEFAULT_MASQUERADE = "https://www.microsoft.com/"
 
 # Имя в сертификате. Своего домена у ноды обычно нет, поэтому сертификат
-# самоподписанный, а клиент не проверяет его (insecure в ссылке): проверка
-# всё равно ничего не дала бы, а имя нужно, чтобы SNI выглядел обычным.
+# самоподписанный, а клиент проверяет его по отпечатку (pinSHA256 в ссылке).
+# Имя всё равно нужно: по нему складывается SNI, и он должен выглядеть обычно.
 DEFAULT_SNI = "www.microsoft.com"
 
 # Порт статистики. Слушает только localhost: наружу его отдавать незачем,
@@ -108,7 +108,17 @@ def build_config(
 
         certificate = (options.get("certificateFile") or "").strip()
         key_file = (options.get("keyFile") or "").strip()
-        if certificate and key_file:
+        acme_domain = (options.get("acmeDomain") or "").strip()
+        if acme_domain:
+            # Настоящий сертификат Let's Encrypt. Единственный способ обойтись
+            # в ссылке вообще без оговорок про проверку: клиент проверяет имя
+            # как у обычного сайта. Нужен домен, направленный на эту ноду, и
+            # свободный порт 80 — по нему проходит подтверждение.
+            config["acme"] = {
+                "domains": [acme_domain],
+                "email": (options.get("acmeEmail") or "").strip(),
+            }
+        elif certificate and key_file:
             config["tls"] = {"cert": certificate, "key": key_file}
         else:
             # Своего сертификата нет — пусть агент выпишет самоподписанный на
@@ -144,16 +154,33 @@ def build_link(
     options = inbound.settings or {}
     address = (host.address if host and host.address else None) or node.address
     port = (host.port if host and host.port else None) or inbound.port
-    sni = (host.sni if host and host.sni else None) or server_name(inbound)
+    acme_domain = (options.get("acmeDomain") or "").strip()
+    sni = (
+        (host.sni if host and host.sni else None) or acme_domain or server_name(inbound)
+    )
 
     params: Dict[str, Any] = {"sni": sni}
     if options.get("obfsPassword"):
         params["obfs"] = "salamander"
         params["obfs-password"] = options["obfsPassword"]
-    # Самоподписанный сертификат клиент обязан принять явно, иначе соединение
-    # оборвётся на проверке. С настоящим сертификатом этого не нужно.
-    if not (options.get("certificateFile") and options.get("keyFile")):
-        params["insecure"] = 1
+
+    # С настоящим сертификатом — своим или от Let's Encrypt — клиенту не нужно
+    # ничего объяснять: он проверит имя, как у любого сайта.
+    own_certificate = bool(acme_domain) or bool(
+        options.get("certificateFile") and options.get("keyFile")
+    )
+    if not own_certificate:
+        # Сертификат самоподписанный, и его надо как-то принять. Отключать
+        # проверку нельзя: свежие ядра отвечают на это «allowInsecure has been
+        # removed» и не поднимают вообще ничего. Поэтому передаём отпечаток —
+        # клиент примет ровно этот сертификат и никакой другой.
+        fingerprint = getattr(node, "hysteria_cert_sha256", "") or ""
+        if fingerprint:
+            params["pinSHA256"] = fingerprint
+        else:
+            # Отпечатка ещё нет: агент старый или конфиг не доехал. Так
+            # подключиться нельзя, но ссылка хотя бы объяснит, чего не хватает.
+            params["insecure"] = 1
 
     query = urlencode(params)
     # Пароль уезжает в userinfo, а имя пользователя нужно потому, что на

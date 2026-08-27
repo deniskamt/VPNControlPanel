@@ -55,6 +55,12 @@ class Node(Base, TimestampMixin):
     xray_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     # Версия агента с последнего опроса: по ней видно, где он устарел.
     agent_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Отпечаток самоподписанного сертификата Hysteria2. Клиент проверяет по
+    # нему сервер вместо отключённой проверки: «не проверять сертификат»
+    # свежие ядра уже не принимают и валят весь конфиг целиком.
+    hysteria_cert_sha256: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True
+    )
     last_status_change: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
     )

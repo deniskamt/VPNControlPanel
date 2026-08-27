@@ -24,6 +24,7 @@ COLUMNS: List[Tuple[str, str, str]] = [
     ("users", "traffic_reset_at", "TIMESTAMP WITHOUT TIME ZONE"),
     ("hosts", "security", "VARCHAR(16)"),
     ("nodes", "agent_version", "INTEGER"),
+    ("nodes", "hysteria_cert_sha256", "VARCHAR(128)"),
 ]
 
 

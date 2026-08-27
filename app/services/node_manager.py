@@ -113,6 +113,11 @@ async def sync_node(
 
     node.config_hash = new_hash
     node.xray_version = result.get("xray_version") or node.xray_version
+    # Отпечаток нужен ссылкам: по нему клиент проверяет самоподписанный
+    # сертификат Hysteria2.
+    node.hysteria_cert_sha256 = (
+        result.get("hysteria_cert_sha256") or node.hysteria_cert_sha256
+    )
     node.last_seen_at = datetime.utcnow()
     await _set_status(session, node, NodeStatus.connected)
     await session.commit()

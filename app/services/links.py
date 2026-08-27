@@ -128,8 +128,10 @@ def _security_params(
         alpn = (host.alpn if host and host.alpn else opts.get("alpn")) or ""
         if alpn:
             params["alpn"] = alpn
-        if host and host.allowinsecure:
-            params["allowInsecure"] = 1
+        # allowInsecure не выдаём: свежие ядра отвечают на него «The feature
+        # allowInsecure has been removed» и не поднимают ни одной строки
+        # подписки. Одна такая настройка ломала бы всё у всех, поэтому
+        # галочка «не проверять сертификат» на ссылки больше не влияет.
         return
 
     # reality

@@ -61,10 +61,11 @@
 </div>
 <div class="form-row" style="margin-top:8px">
   <div class="checks">
-    <label>
+    <label title="Свежие ядра эту настройку не принимают и отказываются
+загружать всю подписку целиком, поэтому в ссылки она больше не попадает">
       <input type="checkbox" name="allowinsecure"
              {% if host and host.allowinsecure %}checked{% endif %}>
-      не проверять сертификат
+      не проверять сертификат <span class="muted">(ядра больше не принимают)</span>
     </label>
   </div>
 </div>

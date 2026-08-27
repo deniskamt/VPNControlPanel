@@ -333,12 +333,32 @@ class HysteriaProcess:
         self.stop()
         self.start()
 
+    def certificate_fingerprint(self) -> str:
+        """Отпечаток SHA-256 сертификата — по нему клиент и проверяет сервер.
+
+        Отключать проверку («insecure») больше нельзя: свежие ядра на такой
+        конфиг отвечают ошибкой и не поднимают вообще ничего. Вместо этого
+        клиенту передаётся отпечаток, и он принимает ровно этот сертификат.
+        """
+        if not HYSTERIA_CERT.exists():
+            return ""
+        try:
+            result = subprocess.run(
+                ["openssl", "x509", "-noout", "-fingerprint", "-sha256",
+                 "-in", str(HYSTERIA_CERT)],
+                capture_output=True, text=True, timeout=20,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        # openssl печатает «sha256 Fingerprint=AB:CD:...» — нужна правая часть.
+        _, _, value = (result.stdout or "").partition("=")
+        return value.strip()
+
     def ensure_certificate(self, common_name: str) -> str:
         """Самоподписанный сертификат для QUIC.
 
         Своего домена у ноды обычно нет, а без сертификата Hysteria2 не
-        поднимется вовсе. Клиент такой сертификат принимает по insecure —
-        ссылку с этим флагом панель выдаёт сама.
+        поднимется вовсе. Клиент проверяет его по отпечатку.
         """
         if HYSTERIA_CERT.exists() and HYSTERIA_KEY.exists():
             return ""
@@ -483,6 +503,7 @@ def health() -> Dict[str, Any]:
         "hysteria_available": hysteria.available,
         "hysteria_running": hysteria.running,
         "hysteria_version": hysteria.version(),
+        "hysteria_cert_sha256": hysteria.certificate_fingerprint(),
         "hysteria_error": hysteria.last_error,
     }
 
@@ -557,6 +578,7 @@ def apply_config(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         "xray_version": xray.version(),
         "hysteria_running": hysteria.running,
         "hysteria_version": hysteria.version(),
+        "hysteria_cert_sha256": hysteria.certificate_fingerprint(),
         "config_hash": xray.config_hash,
     }
 

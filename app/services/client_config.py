@@ -66,8 +66,7 @@ def _stream_settings(inbound: Inbound, host: Optional[Host], address: str) -> Di
         tls: Dict[str, Any] = {"serverName": sni or address, "fingerprint": fingerprint}
         if opts.get("alpn"):
             tls["alpn"] = [part for part in str(opts["alpn"]).split(",") if part]
-        if opts.get("allowInsecure"):
-            tls["allowInsecure"] = True
+        # allowInsecure убран из ядра: профиль с ним не запустится целиком.
         stream["tlsSettings"] = tls
 
     return stream

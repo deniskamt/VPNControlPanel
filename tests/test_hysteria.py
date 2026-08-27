@@ -23,7 +23,8 @@ def make_inbound(settings, port=443, enabled=True):
 
 def make_node(inbounds):
     return SimpleNamespace(id=1, name="NL", address="nl.example.com", country="NL",
-                           inbounds=inbounds, is_enabled=True, sort_order=0)
+                           inbounds=inbounds, is_enabled=True, sort_order=0,
+                           hysteria_cert_sha256=None)
 
 
 def make_user(password="pass-1", username="user1"):
@@ -148,3 +149,49 @@ def test_hysteria_stays_out_of_the_xray_config(settings):
 
     # В конфиге Xray остаётся только служебный api-inbound.
     assert tags == ["api"]
+
+
+def test_pinned_certificate_instead_of_disabled_check(settings):
+    inbound = make_inbound(settings)
+    node = make_node([inbound])
+    node.hysteria_cert_sha256 = "E8:E0:69:4D:88"
+    user = make_user()
+    user.inbounds = [inbound]
+
+    link = links.build_link(user, inbound, node)
+    query = {k: v[0] for k, v in parse_qs(urlparse(link).query).items()}
+
+    # Отключение проверки свежие ядра не принимают и валят на нём весь
+    # конфиг: «The feature allowInsecure has been removed».
+    assert "insecure" not in query
+    assert query["pinSHA256"] == "E8:E0:69:4D:88"
+
+
+def test_acme_link_needs_no_excuses(settings):
+    settings = dict(settings, acmeDomain="hy.example.com", acmeEmail="me@example.com")
+    inbound = make_inbound(settings)
+    node = make_node([inbound])
+    node.hysteria_cert_sha256 = None
+    user = make_user()
+    user.inbounds = [inbound]
+
+    config = hysteria.build_config(node, [inbound], {1: [user]})
+    link = links.build_link(user, inbound, node)
+    query = {k: v[0] for k, v in parse_qs(urlparse(link).query).items()}
+
+    assert config["acme"] == {"domains": ["hy.example.com"], "email": "me@example.com"}
+    assert "selfSignedFor" not in config and "tls" not in config
+    # Настоящий сертификат: ни отпечатка, ни отключённой проверки не нужно.
+    assert "insecure" not in query and "pinSHA256" not in query
+    assert query["sni"] == "hy.example.com"
+
+
+def test_links_never_carry_the_removed_allowinsecure():
+    """Одна такая настройка ломала бы подписку целиком у всех."""
+    from app.services import links as links_module
+
+    source = (
+        pytest.importorskip("pathlib").Path(links_module.__file__).read_text("utf-8")
+    )
+    # В коде остались только пояснения, а не сама подстановка.
+    assert 'params["allowInsecure"]' not in source
