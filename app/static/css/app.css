@@ -319,3 +319,15 @@ details.editor > div { padding: 0 16px 16px; }
 .inline-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .inline-form label { margin: 0; color: var(--muted); font-size: 13px; }
 .inline-form select { max-width: 320px; }
+
+/* Флаги картинками: эмодзи-флаг рисуется не во всех системах, в Windows
+   вместо него видны две буквы. */
+.flag {
+  width: 20px;
+  height: 15px;
+  border-radius: 2px;
+  object-fit: cover;
+  vertical-align: -2px;
+  margin-right: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .12);
+}

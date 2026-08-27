@@ -19,6 +19,7 @@ from app.services.links import (
     _effective_security,
     _remark,
     build_link,
+    user_rows,
 )
 
 
@@ -66,28 +67,10 @@ def _entry(user: User, inbound: Inbound, node: Node, host: Optional[Host]) -> En
 
 def entries_for(user: User, nodes: List[Node]) -> List[Entry]:
     """Строки подписки конкретного пользователя, в порядке показа у клиента."""
-    allowed_ids = {inbound.id for inbound in user.inbounds}
-    entries: List[Entry] = []
-
-    for node in sorted(nodes, key=lambda item: (item.sort_order, item.id)):
-        if not node.is_enabled or not user.allowed_on(node.id):
-            continue
-        for inbound in sorted(node.inbounds, key=lambda item: item.id):
-            if not inbound.is_enabled or inbound.id not in allowed_ids:
-                continue
-
-            hosts = [
-                host
-                for host in inbound.hosts
-                if not host.is_disabled and host.node_id in (None, node.id)
-            ]
-            if not hosts:
-                entries.append(_entry(user, inbound, node, None))
-                continue
-            for host in sorted(hosts, key=lambda item: (item.sort_order, item.id)):
-                entries.append(_entry(user, inbound, node, host))
-
-    return entries
+    return [
+        _entry(user, inbound, node, host)
+        for node, inbound, host in user_rows(user, nodes)
+    ]
 
 
 def hidden_entries(user: User, nodes: List[Node]) -> List[dict]:
@@ -134,53 +117,20 @@ def hidden_entries(user: User, nodes: List[Node]) -> List[dict]:
     return reasons
 
 
-def reorder(items: list, item_id: int, up: bool) -> bool:
-    """Передвинуть запись на строку выше или ниже в общем порядке.
+def apply_order(rows: List[tuple]) -> None:
+    """Записать сквозной порядок строк.
 
-    Годится и для серверов, и для хостов: и те и другие сортируются парой
-    (sort_order, id). Приложение показывает конфигурации в том порядке, в
-    каком они пришли, поэтому это ровно то, что увидит человек.
-
-    Нумерацию раздаём заново всему списку: по умолчанию sort_order у всех
-    нулевой, и обмен двух одинаковых значений ничего бы не изменил.
-    Возвращает False, если двигать некуда.
+    У строки с хостом место своё. У строки по умолчанию отдельного места
+    нет — она получает его от сервера, поэтому серверу достаётся номер его
+    первой строки. Чтобы такую строку можно было двигать саму по себе, для
+    неё заводится хост — этим занимается раздел «Подписка».
     """
-    ordered = sorted(items, key=lambda item: (item.sort_order, item.id))
-    index = next(
-        (position for position, item in enumerate(ordered) if item.id == item_id), None
-    )
-    if index is None:
-        return False
+    first_row: dict = {}
+    for position, (node, _inbound, host) in enumerate(rows):
+        if host is not None:
+            host.sort_order = position
+        else:
+            first_row.setdefault(node.id, (node, position))
 
-    target = index - 1 if up else index + 1
-    moved = 0 <= target < len(ordered)
-    if moved:
-        ordered[index], ordered[target] = ordered[target], ordered[index]
-
-    for position, item in enumerate(ordered):
-        item.sort_order = position
-
-    return moved
-
-
-def group_moves(entries: List[Entry]) -> dict:
-    """Какие строки внутри одного сервера можно двигать и куда.
-
-    Двигаются только строки с хостом: строка «по умолчанию» на подключении
-    одна, переставлять её не с чем. Ключ — Entry.key, как в формах.
-    """
-    groups: dict = {}
-    for entry in entries:
-        groups.setdefault((entry.node.id, entry.inbound.id), []).append(entry)
-
-    moves: dict = {}
-    for members in groups.values():
-        movable = [item for item in members if item.host]
-        if len(movable) < 2:
-            continue
-        for position, entry in enumerate(movable):
-            moves[entry.key] = {
-                "up": position > 0,
-                "down": position < len(movable) - 1,
-            }
-    return moves
+    for node, position in first_row.values():
+        node.sort_order = position

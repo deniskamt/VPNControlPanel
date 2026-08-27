@@ -10,7 +10,7 @@ from hashlib import sha256
 import pytest
 
 from app.core.config import settings
-from app.services import subscription_view
+from app.services import links, subscription_view
 from app.services.subscription import (
     create_subscription_token,
     get_subscription_payload,
@@ -81,87 +81,51 @@ def test_garbage_rejected():
         assert get_subscription_payload(token) is None
 
 
-class _FakeRow:
-    """Порядок считается по полям, а не по базе — этого достаточно."""
-
-    def __init__(self, node_id: int, sort_order: int = 0) -> None:
-        self.id = node_id
+class _FakeRef:
+    def __init__(self, ref_id: int, sort_order: int = 0) -> None:
+        self.id = ref_id
         self.sort_order = sort_order
 
 
-def _order(nodes):
-    return [node.id for node in sorted(nodes, key=lambda n: (n.sort_order, n.id))]
+def _row(node, inbound_id, host=None):
+    return (node, _FakeRef(inbound_id), host)
 
 
-def test_reorder_up_when_order_not_set():
-    # По умолчанию у всех серверов sort_order = 0: обмен значениями ничего бы
-    # не дал, поэтому нумерация раздаётся заново.
-    nodes = [_FakeRow(1), _FakeRow(2), _FakeRow(3)]
+def test_row_order_is_flat():
+    # Две записи одного сервера должны уметь разойтись: между ними встаёт
+    # запись другого сервера.
+    first = _FakeRef(1, sort_order=0)
+    second = _FakeRef(2, sort_order=1)
+    rows = [
+        _row(first, 10, _FakeRef(100, sort_order=0)),
+        _row(second, 20),
+        _row(first, 10, _FakeRef(101, sort_order=2)),
+    ]
 
-    assert subscription_view.reorder(nodes, 3, up=True) is True
-    assert _order(nodes) == [1, 3, 2]
+    order = sorted(rows, key=lambda row: links.row_sort_key(*row))
 
-
-def test_reorder_down():
-    nodes = [_FakeRow(1), _FakeRow(2), _FakeRow(3)]
-
-    assert subscription_view.reorder(nodes, 1, up=False) is True
-    assert _order(nodes) == [2, 1, 3]
-
-
-def test_reorder_at_the_edge_does_nothing():
-    nodes = [_FakeRow(1), _FakeRow(2)]
-
-    assert subscription_view.reorder(nodes, 1, up=True) is False
-    assert _order(nodes) == [1, 2]
+    assert [row[2].id if row[2] else 0 for row in order] == [100, 0, 101]
 
 
-def test_reorder_unknown_row_is_ignored():
-    nodes = [_FakeRow(1, sort_order=5), _FakeRow(2, sort_order=7)]
+def test_apply_order_numbers_every_row():
+    node = _FakeRef(1, sort_order=7)
+    other = _FakeRef(2, sort_order=9)
+    hosts = [_FakeRef(100), _FakeRef(101)]
+    rows = [_row(node, 10, hosts[0]), _row(other, 20), _row(node, 10, hosts[1])]
 
-    assert subscription_view.reorder(nodes, 99, up=True) is False
-    # Чужой запрос не должен перетасовывать список.
-    assert _order(nodes) == [1, 2]
-    assert [node.sort_order for node in nodes] == [5, 7]
+    subscription_view.apply_order(rows)
 
-
-class _FakeRef:
-    def __init__(self, ref_id: int) -> None:
-        self.id = ref_id
-
-
-class _FakeEntry:
-    """Строка подписки: для группировки важны только сервер, подключение и хост."""
-
-    def __init__(self, node_id: int, inbound_id: int, host_id=None) -> None:
-        self.node = _FakeRef(node_id)
-        self.inbound = _FakeRef(inbound_id)
-        self.host = _FakeRef(host_id) if host_id else None
-
-    @property
-    def key(self) -> str:
-        return f"{self.node.id}-{self.inbound.id}-{self.host.id if self.host else 0}"
+    assert [host.sort_order for host in hosts] == [0, 2]
+    # У строки по умолчанию своего места нет — его получает сервер.
+    assert other.sort_order == 1
 
 
-def test_group_moves_marks_first_and_last_row():
-    # Два хоста на одном подключении: прямой и через промежуточный узел.
-    entries = [_FakeEntry(1, 10, host_id=5), _FakeEntry(1, 10, host_id=6)]
+def test_apply_order_keeps_default_rows_of_one_server_together():
+    # Сервер хранит одно число на все свои строки без хоста: они получают
+    # место первой из них.
+    node = _FakeRef(1)
+    rows = [_row(node, 10), _row(node, 20)]
 
-    moves = subscription_view.group_moves(entries)
+    subscription_view.apply_order(rows)
 
-    assert moves["1-10-5"] == {"up": False, "down": True}
-    assert moves["1-10-6"] == {"up": True, "down": False}
-
-
-def test_group_moves_skips_single_rows():
-    # Одну строку двигать не с чем — стрелки показывать незачем.
-    entries = [_FakeEntry(1, 10, host_id=5), _FakeEntry(2, 20)]
-
-    assert subscription_view.group_moves(entries) == {}
-
-
-def test_group_moves_does_not_mix_different_servers():
-    entries = [_FakeEntry(1, 10, host_id=5), _FakeEntry(2, 10, host_id=6)]
-
-    # Хосты разных серверов — это разные списки, каждый по одной строке.
-    assert subscription_view.group_moves(entries) == {}
+    assert node.sort_order == 0

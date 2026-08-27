@@ -21,7 +21,7 @@ from app.models.enums import SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.models.user import User
-from app.services import settings_store, subscription_view
+from app.services import links, settings_store, subscription_view
 from app.services import users as user_service
 from app.services.audit import log_action
 from app.services.worker import trigger_sync
@@ -91,7 +91,6 @@ async def subscription_page(
             "inbounds": inbounds,
             "user": user,
             "entries": entries,
-            "row_moves": subscription_view.group_moves(entries),
             "hidden": hidden,
             "securities": [item.value for item in SecurityType],
             "remark_tokens": REMARK_TOKENS,
@@ -245,75 +244,67 @@ async def delete_host(
     return _redirect(int(user_id) if user_id.strip().isdigit() else None)
 
 
-@router.post("/hosts/{host_id}/move")
-async def move_host(
-    host_id: int,
+@router.post("/rows/move")
+async def move_row(
     direction: str = Form(...),
-    node_id: str = Form(default=""),
+    node_id: int = Form(...),
+    inbound_id: int = Form(...),
+    host_id: int = Form(default=0),
     user_id: str = Form(default=""),
     session: AsyncSession = Depends(get_session),
     admin: Admin = Depends(web_admin),
 ):
-    """Поднять или опустить запись внутри одного сервера.
+    """Поднять или опустить одну строку подписки.
 
-    У сервера может быть несколько записей на одно подключение — например,
-    прямая и через промежуточный узел. Порядок между ними решает, что
-    человек увидит в приложении первым.
+    Порядок сквозной: строку можно поставить между записями другого сервера.
+    У строки «по умолчанию» своего места нет — она наследует его от сервера,
+    поэтому при первом же перемещении для неё заводится хост без каких-либо
+    переопределений. На вид ссылка от этого не меняется.
     """
-    host = await session.get(Host, host_id)
-    if host is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Хост не найден")
+    preview = int(user_id) if user_id.strip().isdigit() else None
+    user = await _preview_user(session, preview)
+    if user is None:
+        return _redirect(preview)
 
-    result = await session.execute(
-        select(Host).where(Host.inbound_id == host.inbound_id)
+    nodes = list((await session.execute(select(Node))).scalars().all())
+    rows = links.user_rows(user, nodes)
+    index = next(
+        (
+            position
+            for position, (node, inbound, host) in enumerate(rows)
+            if node.id == node_id
+            and inbound.id == inbound_id
+            and (host.id if host else 0) == host_id
+        ),
+        None,
     )
-    # Двигаем внутри той же группы, что видна на странице: хосты этого
-    # подключения, применимые к этому серверу.
-    node = int(node_id) if node_id.strip().isdigit() else None
-    hosts = [item for item in result.scalars().all() if item.node_id in (None, node)]
+    if index is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Строка не найдена")
 
-    if subscription_view.reorder(hosts, host_id, up=direction == "up"):
+    target = index - 1 if direction == "up" else index + 1
+    if 0 <= target < len(rows):
+        node, inbound, host = rows[index]
+        if host is None:
+            host = Host(
+                inbound_id=inbound.id, node_id=node.id, remark=links.DEFAULT_REMARK
+            )
+            session.add(host)
+            await session.flush()
+            rows[index] = (node, inbound, host)
+
+        rows[index], rows[target] = rows[target], rows[index]
+        subscription_view.apply_order(rows)
         await log_action(
             session,
-            action="host.move",
+            action="subscription.move",
             actor=admin.username,
-            target=str(host_id),
+            target=f"{node.name} → {inbound.tag}",
             target_type="host",
             message="выше в подписке" if direction == "up" else "ниже в подписке",
         )
+
     await session.commit()
-    return _redirect(int(user_id) if user_id.strip().isdigit() else None)
-
-
-@router.post("/nodes/{node_id}/move")
-async def move_node(
-    node_id: int,
-    direction: str = Form(...),
-    user_id: str = Form(default=""),
-    session: AsyncSession = Depends(get_session),
-    admin: Admin = Depends(web_admin),
-):
-    """Поднять или опустить сервер в подписке.
-
-    Порядок общий для всех пользователей: подписка у всех собирается одним
-    и тем же перебором, просто с разным набором доступных серверов.
-    """
-    node = await session.get(Node, node_id)
-    if node is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сервер не найден")
-
-    nodes = list((await session.execute(select(Node))).scalars().all())
-    if subscription_view.reorder(nodes, node_id, up=direction == "up"):
-        await log_action(
-            session,
-            action="node.move",
-            actor=admin.username,
-            target=node.name,
-            target_type="node",
-            message="выше в подписке" if direction == "up" else "ниже в подписке",
-        )
-    await session.commit()
-    return _redirect(int(user_id) if user_id.strip().isdigit() else None)
+    return _redirect(preview)
 
 
 @router.post("/inbounds/{inbound_id}/toggle")

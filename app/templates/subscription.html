@@ -118,7 +118,7 @@
   <header>
     Конфигурации в подписке
     <span class="muted" style="font-weight:400">{{ entries | length }} шт. — в этом же порядке их покажет приложение.
-      Стрелки у названия сервера двигают его целиком, стрелки в действиях — одну строку</span>
+      Стрелками ↑↓ переставьте любую строку куда угодно</span>
   </header>
   {% if not entries %}
     <div class="empty">
@@ -136,52 +136,32 @@
     <tbody>
     {% for entry in entries %}
       <tr>
-        <td><b>{{ entry.remark }}</b></td>
-        <td>
-          {{ flag(entry.node.country) }} {{ entry.node.name }}
-          {# Стрелки — у первой строки сервера: двигается он целиком. #}
-          {% if loop.first or entries[loop.index0 - 1].node.id != entry.node.id %}
-            <span class="actions">
-              <form class="inline" method="post" action="/subscription/nodes/{{ entry.node.id }}/move">
-                <input type="hidden" name="user_id" value="{{ user.id }}">
-                <input type="hidden" name="direction" value="up">
-                <button class="small" type="submit" title="Поднять сервер выше"
-                        {% if entry.node.id == nodes[0].id %}disabled{% endif %}>↑</button>
-              </form>
-              <form class="inline" method="post" action="/subscription/nodes/{{ entry.node.id }}/move">
-                <input type="hidden" name="user_id" value="{{ user.id }}">
-                <input type="hidden" name="direction" value="down">
-                <button class="small" type="submit" title="Опустить сервер ниже"
-                        {% if entry.node.id == nodes[-1].id %}disabled{% endif %}>↓</button>
-              </form>
-            </span>
-          {% endif %}
-        </td>
+        <td><b>{{ entry.remark | flags }}</b></td>
+        <td>{{ flag(entry.node.country) }} {{ entry.node.name }}</td>
         <td>{{ entry.inbound.tag }}</td>
         <td class="mono">{{ entry.address }}:{{ entry.port }}</td>
         <td>{{ entry.network }} / {{ entry.security.value }}</td>
         <td class="muted">{{ entry.source }}</td>
         <td>
           <div class="actions">
-            {# Строк на одном подключении бывает несколько — например, прямая
-               и через промежуточный узел. Их порядок задаётся здесь. #}
-            {% set moves = row_moves.get(entry.key) %}
-            {% if moves %}
-              <form class="inline" method="post" action="/subscription/hosts/{{ entry.host.id }}/move">
+            {# Порядок сквозной: строку можно поставить между записями
+               другого сервера. Края списка запоминаем до вложенного цикла —
+               внутри него loop уже про стрелки. #}
+            {% set at_top = loop.first %}
+            {% set at_bottom = loop.last %}
+            {% for way, arrow, hint, edge in [
+                 ("up", "↑", "Выше в подписке", at_top),
+                 ("down", "↓", "Ниже в подписке", at_bottom)] %}
+              <form class="inline" method="post" action="/subscription/rows/move">
                 <input type="hidden" name="user_id" value="{{ user.id }}">
                 <input type="hidden" name="node_id" value="{{ entry.node.id }}">
-                <input type="hidden" name="direction" value="up">
-                <button class="small" type="submit" title="Выше среди записей этого сервера"
-                        {% if not moves.up %}disabled{% endif %}>↑</button>
+                <input type="hidden" name="inbound_id" value="{{ entry.inbound.id }}">
+                <input type="hidden" name="host_id" value="{{ entry.host.id if entry.host else 0 }}">
+                <input type="hidden" name="direction" value="{{ way }}">
+                <button class="small" type="submit" title="{{ hint }}"
+                        {% if edge %}disabled{% endif %}>{{ arrow }}</button>
               </form>
-              <form class="inline" method="post" action="/subscription/hosts/{{ entry.host.id }}/move">
-                <input type="hidden" name="user_id" value="{{ user.id }}">
-                <input type="hidden" name="node_id" value="{{ entry.node.id }}">
-                <input type="hidden" name="direction" value="down">
-                <button class="small" type="submit" title="Ниже среди записей этого сервера"
-                        {% if not moves.down %}disabled{% endif %}>↓</button>
-              </form>
-            {% endif %}
+            {% endfor %}
             <button class="small" data-toggle="#entry-{{ entry.key }}">Настроить</button>
             {% if entry.host %}
               <form class="inline" method="post" action="/subscription/hosts/{{ entry.host.id }}/toggle">

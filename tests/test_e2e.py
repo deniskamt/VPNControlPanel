@@ -10,6 +10,7 @@
 
 import base64
 import os
+import re
 
 import pytest
 
@@ -671,3 +672,98 @@ def test_no_reset_strategy_leaves_traffic_alone(client, auth):
     assert _in_own_loop(работа) == 0
     assert client.get("/api/user/user_forever_traffic",
                       headers=auth).json()["used_traffic"] == 999
+
+
+def _subscription_names(client, auth):
+    """Названия конфигураций в том порядке, в каком их получит приложение."""
+    from urllib.parse import unquote
+
+    user = client.get("/api/user/user_12345", headers=auth).json()
+    path = user["subscription_url"].replace("https://vpn.example.com", "")
+    response = client.get(path, headers={"User-Agent": "v2rayNG/1.8.5"})
+    links = base64.b64decode(response.text).decode().splitlines()
+    return [unquote(link.rsplit("#", 1)[-1]) for link in links]
+
+
+def test_subscription_rows_can_be_interleaved(client, auth, inbound):
+    """Две записи одного сервера должны уметь разойтись.
+
+    Порядок в подписке сквозной: между записями одного сервера можно
+    поставить запись другого — ради этого и делались стрелки.
+    """
+    second = client.post(
+        "/nodes/create",
+        data={
+            "name": "DE-1",
+            "address": "de1.example.com",
+            "agent_host": "127.0.0.1",
+            "agent_port": 9,
+            "agent_token": "node-token",
+            "country": "DE",
+            "inbound_ids": [1],
+        },
+        follow_redirects=False,
+    )
+    assert second.status_code == 303, second.text
+
+    # Номер пользователя берём со страницы: в Marzban-совместимом API его нет.
+    page = client.get("/subscription").text
+    user_id = re.search(r'value="(\d+)"[^>]*>\s*user_12345', page).group(1)
+
+    created = client.post(
+        "/subscription/hosts/create",
+        data={
+            "inbound_id": 1,
+            "node_id": 1,
+            "remark": "через фронт",
+            "address": "front.example.com",
+            "user_id": user_id,
+        },
+        follow_redirects=False,
+    )
+    assert created.status_code == 303, created.text
+
+    # Номер немецкого сервера — из его же строки: в форме «создать настройку»
+    # он лежит рядом с подсказкой, к чему настройка применится.
+    page = client.get(f"/subscription?user_id={user_id}").text
+    german_id = re.search(
+        r'name="node_id" value="(\d+)"[\s\S]{0,4000}?сервере DE-1', page
+    ).group(1)
+
+    names = _subscription_names(client, auth)
+    assert "через фронт" in names, names
+    # На сервере NL-1 две записи одного подключения, и они стоят рядом.
+    mine = next(index for index, name in enumerate(names) if "Мой сервер" in name)
+    front = names.index("через фронт")
+    assert abs(mine - front) == 1, names
+
+    # Двигаем немецкий сервер вниз — он должен встать между ними.
+    moved = client.post(
+        "/subscription/rows/move",
+        data={
+            "direction": "down",
+            "node_id": german_id,
+            "inbound_id": 1,
+            "host_id": 0,
+            "user_id": user_id,
+        },
+        follow_redirects=False,
+    )
+    assert moved.status_code == 303, moved.text
+
+    names = _subscription_names(client, auth)
+    mine = next(index for index, name in enumerate(names) if "Мой сервер" in name)
+    german = next(index for index, name in enumerate(names) if "DE-1" in name)
+    front = names.index("через фронт")
+    assert mine < german < front, names
+
+
+def test_pages_show_flag_images(client, inbound):
+    """Флаг в панели — картинка: эмодзи рисуется не в каждой системе."""
+    page = client.get("/nodes").text
+    assert '<img class="flag" src="/static/flags/nl.svg"' in page
+    assert client.get("/static/flags/nl.svg").status_code == 200
+
+    # В названии конфигурации флаг тоже подменяется картинкой, а сам текст
+    # уходит клиенту с эмодзи — иначе приложение не нарисует иконку страны.
+    assert "/static/flags/de.svg" in client.get("/subscription").text

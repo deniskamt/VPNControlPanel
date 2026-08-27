@@ -1,15 +1,61 @@
 """Jinja-окружение веб-панели."""
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 
-from app.services.flags import country_flag
+from app.services.flags import country_code, country_flag
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+# Какие флаги лежат картинками. Список снимаем один раз при запуске:
+# на каждую строку таблицы ходить в файловую систему незачем.
+FLAG_DIR = BASE_DIR / "static" / "flags"
+FLAG_FILES = {path.stem.upper() for path in FLAG_DIR.glob("*.svg")}
+
+
+def flag(country: Optional[str]) -> Markup:
+    """Флаг страны картинкой.
+
+    Эмодзи-флаг рисуется только тем шрифтом, где он есть: в Windows и в
+    части браузеров вместо флага показываются две буквы. Поэтому в панели
+    отдаём svg, а эмодзи оставляем запасным вариантом — для стран, которых
+    нет в наборе.
+    """
+    code = country_code(country)
+    if code in FLAG_FILES:
+        return Markup(
+            f'<img class="flag" src="/static/flags/{code.lower()}.svg" '
+            f'alt="{code}" loading="lazy">'
+        )
+    return Markup(escape(country_flag(country)))
+
+
+# Пара букв-индикаторов — это и есть эмодзи флага.
+_FLAG_PAIR = re.compile("[\U0001f1e6-\U0001f1ff]{2}")
+
+
+def flag_text(value: Optional[str]) -> Markup:
+    """Название конфигурации, где эмодзи-флаг заменён картинкой.
+
+    В названии, которое уедет клиенту, флаг обязан остаться эмодзи —
+    приложения рисуют иконку страны только по нему. А на странице показываем
+    ровно то, что увидит человек в приложении, только флаг настоящий.
+    """
+    text = str(value or "")
+    parts = []
+    last = 0
+    for match in _FLAG_PAIR.finditer(text):
+        parts.append(escape(text[last : match.start()]))
+        parts.append(flag(match.group()))
+        last = match.end()
+    parts.append(escape(text[last:]))
+    return Markup("").join(parts)
 
 
 def human_bytes(value: Optional[int]) -> str:
@@ -65,5 +111,6 @@ templates.env.filters["expire"] = human_expire
 templates.env.filters["uptime"] = human_uptime
 templates.env.globals["usage_percent"] = usage_percent
 # Флаг страны нужен в нескольких шаблонах — от списка серверов до подписки.
-templates.env.globals["flag"] = country_flag
+templates.env.globals["flag"] = flag
+templates.env.filters["flags"] = flag_text
 templates.env.globals["now"] = datetime.utcnow

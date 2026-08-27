@@ -143,6 +143,31 @@ def country_options(current: Optional[str] = None):
     return options
 
 
+def country_code(country: Optional[str]) -> str:
+    """Двухбуквенный код по значению из карточки сервера.
+
+    Значение приходит откуда угодно: код, русское название, а иногда и сам
+    эмодзи флага — его разбираем обратно в буквы. Пустая строка, если понять
+    не удалось.
+    """
+    if not country:
+        return ""
+
+    value = country.strip()
+    letters = [
+        chr(ord(char) - _INDICATOR_OFFSET)
+        for char in value
+        if 0x1F1E6 <= ord(char) <= 0x1F1FF
+    ]
+    if len(letters) == 2:
+        return "".join(letters).upper()
+
+    code = ALIASES.get(value.upper(), value.upper())
+    if len(code) == 2 and code.isalpha() and code.isascii():
+        return code
+    return ""
+
+
 def country_flag(country: Optional[str]) -> str:
     """Эмодзи флага по коду страны. Пустая строка, если код непонятен."""
     if not country:

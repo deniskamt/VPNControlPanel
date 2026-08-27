@@ -6,7 +6,9 @@
 
 import pytest
 
+from app.services import flags
 from app.services.flags import country_flag
+from app.web import templates
 
 
 @pytest.mark.parametrize(
@@ -61,3 +63,33 @@ def test_country_options_keep_unknown_current_value():
 
     # Уже известная страна не дублируется.
     assert [code for code, _, _ in country_options("SE")].count("SE") == 1
+
+
+def test_country_code_understands_names_and_emoji():
+    assert flags.country_code("NL") == "NL"
+    assert flags.country_code("Нидерланды") == "NL"
+    assert flags.country_code("🇩🇪") == "DE"
+    assert flags.country_code("бог знает что") == ""
+    assert flags.country_code(None) == ""
+
+
+def test_flag_is_rendered_as_image():
+    # Эмодзи-флаг виден не в каждой системе, поэтому в панели — картинка.
+    assert '<img class="flag" src="/static/flags/nl.svg"' in str(templates.flag("NL"))
+    assert "eu.svg" in str(templates.flag("Евросоюз"))
+
+
+def test_flag_falls_back_to_emoji_for_unknown_country():
+    assert str(templates.flag("ZZ")) == "🇿🇿"
+    assert str(templates.flag("")) == ""
+
+
+def test_flag_text_replaces_only_the_flag():
+    result = str(templates.flag_text("🇳🇱 Netherlands #1"))
+
+    assert result.startswith('<img class="flag" src="/static/flags/nl.svg"')
+    assert result.endswith(" Netherlands #1")
+
+
+def test_flag_text_escapes_the_rest():
+    assert "&lt;b&gt;" in str(templates.flag_text("🇳🇱 <b>"))

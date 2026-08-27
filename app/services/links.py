@@ -209,19 +209,36 @@ def build_link(
     return f"{scheme}://{secret}@{address}:{port}?{query}#{quote(remark)}"
 
 
-def build_user_links(user: User, nodes: List[Node]) -> List[str]:
-    """Все ссылки пользователя: по каждому доступному inbound на каждой ноде."""
-    allowed_ids = {inbound.id for inbound in user.inbounds}
-    links: List[str] = []
+def row_sort_key(node: Node, inbound: Inbound, host: Optional[Host]):
+    """Место строки в подписке.
 
-    for node in sorted(nodes, key=lambda n: (n.sort_order, n.id)):
+    Порядок сквозной, а не «сначала серверы, потом всё внутри»: у строки с
+    хостом он свой, у строки по умолчанию берётся от сервера. Поэтому две
+    записи одного сервера можно развести и поставить между ними чужую.
+    """
+    position = host.sort_order if host is not None else node.sort_order
+    return (position, node.sort_order, inbound.id, host.id if host else 0)
+
+
+def user_rows(
+    user: User, nodes: List[Node]
+) -> List[tuple]:
+    """Строки подписки пользователя: (сервер, подключение, хост).
+
+    Один перебор на всю панель: и ссылки, и список на странице «Подписка»
+    строятся отсюда, иначе порядок у клиента и у администратора разойдётся.
+    """
+    allowed_ids = {inbound.id for inbound in user.inbounds}
+    rows: List[tuple] = []
+
+    for node in nodes:
         if not node.is_enabled:
             continue
         # Закрытый для пользователя сервер не должен появляться в подписке:
         # иначе клиент будет упорно долбиться в него и показывать ошибки.
         if not user.allowed_on(node.id):
             continue
-        for inbound in sorted(node.inbounds, key=lambda i: i.id):
+        for inbound in node.inbounds:
             if not inbound.is_enabled or inbound.id not in allowed_ids:
                 continue
 
@@ -231,14 +248,18 @@ def build_user_links(user: User, nodes: List[Node]) -> List[str]:
                 if not host.is_disabled and host.node_id in (None, node.id)
             ]
             if not hosts:
-                link = build_link(user, inbound, node)
-                if link:
-                    links.append(link)
+                rows.append((node, inbound, None))
                 continue
+            rows.extend((node, inbound, host) for host in hosts)
 
-            for host in sorted(hosts, key=lambda h: (h.sort_order, h.id)):
-                link = build_link(user, inbound, node, host)
-                if link:
-                    links.append(link)
+    rows.sort(key=lambda row: row_sort_key(*row))
+    return rows
 
-    return links
+
+def build_user_links(user: User, nodes: List[Node]) -> List[str]:
+    """Все ссылки пользователя: по каждому доступному inbound на каждой ноде."""
+    links = [
+        build_link(user, inbound, node, host)
+        for node, inbound, host in user_rows(user, nodes)
+    ]
+    return [link for link in links if link]
