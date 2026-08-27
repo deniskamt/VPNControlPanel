@@ -111,6 +111,19 @@ async def sync_node(
         logger.error(f"Не удалось применить конфиг на ноде {node.name}: {exc}")
         return False
 
+    # Агент до версии 4 про Hysteria2 не знает и молча пропускает её конфиг:
+    # подключение в панели есть, ссылка выдаётся, а на ноде никто не слушает.
+    # Молчание тут хуже ошибки, поэтому говорим прямо.
+    if hysteria_config and not result.get("hysteria_running"):
+        problem = (
+            "Hysteria2 не поднялась: агент на этой ноде её не умеет. "
+            "Обновите агента — кнопка «Обновить» в строке сервера."
+        )
+        await _set_status(session, node, NodeStatus.error, problem)
+        await session.commit()
+        logger.error(f"{node.name}: {problem}")
+        return False
+
     node.config_hash = new_hash
     node.xray_version = result.get("xray_version") or node.xray_version
     # Отпечаток нужен ссылкам: по нему клиент проверяет самоподписанный
