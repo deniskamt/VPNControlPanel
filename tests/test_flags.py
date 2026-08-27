@@ -93,3 +93,17 @@ def test_flag_text_replaces_only_the_flag():
 
 def test_flag_text_escapes_the_rest():
     assert "&lt;b&gt;" in str(templates.flag_text("🇳🇱 <b>"))
+
+
+def test_flag_image_carries_its_own_size():
+    # Размер задаётся в самой картинке: если css остался в кеше браузера,
+    # флаг всё равно не растянется на всю строку.
+    html = str(templates.flag("NL"))
+    assert 'width="20"' in html and 'height="15"' in html
+
+
+def test_asset_url_changes_with_the_file():
+    url = templates.asset("css/app.css")
+    assert url.startswith("/static/css/app.css?v=")
+    # Несуществующий файл не должен ронять страницу.
+    assert templates.asset("css/нет.css") == "/static/css/нет.css"

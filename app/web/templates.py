@@ -31,7 +31,7 @@ def flag(country: Optional[str]) -> Markup:
     if code in FLAG_FILES:
         return Markup(
             f'<img class="flag" src="/static/flags/{code.lower()}.svg" '
-            f'alt="{code}" loading="lazy">'
+            f'alt="{code}" width="20" height="15" loading="lazy">'
         )
     return Markup(escape(country_flag(country)))
 
@@ -56,6 +56,21 @@ def flag_text(value: Optional[str]) -> Markup:
         last = match.end()
     parts.append(escape(text[last:]))
     return Markup("").join(parts)
+
+
+def asset(path: str) -> str:
+    """Адрес файла статики с меткой версии.
+
+    Браузер держит css и js в кеше, и после обновления панели человек видит
+    старое оформление — пока не нажмёт Ctrl+F5. Метка — время правки файла:
+    меняется вместе с файлом и ничего не требует от нас.
+    """
+    name = path.lstrip("/")
+    try:
+        stamp = int((BASE_DIR / "static" / name).stat().st_mtime)
+    except OSError:
+        return f"/static/{name}"
+    return f"/static/{name}?v={stamp}"
 
 
 def human_bytes(value: Optional[int]) -> str:
@@ -113,4 +128,5 @@ templates.env.globals["usage_percent"] = usage_percent
 # Флаг страны нужен в нескольких шаблонах — от списка серверов до подписки.
 templates.env.globals["flag"] = flag
 templates.env.filters["flags"] = flag_text
+templates.env.globals["asset"] = asset
 templates.env.globals["now"] = datetime.utcnow

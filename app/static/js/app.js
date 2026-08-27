@@ -45,6 +45,29 @@
     if (question && !window.confirm(question)) event.preventDefault();
   });
 
+  // Кнопки отправляют обычные формы, и после каждой страница
+  // перезагружается с самого верха. Запоминаем место и возвращаемся туда же.
+  var SCROLL_KEY = "scroll:" + location.pathname;
+
+  document.addEventListener("submit", function () {
+    try {
+      sessionStorage.setItem(SCROLL_KEY, String(window.scrollY));
+    } catch (error) {
+      /* приватный режим — просто не запомним */
+    }
+  });
+
+  window.addEventListener("pageshow", function () {
+    var saved = null;
+    try {
+      saved = sessionStorage.getItem(SCROLL_KEY);
+      sessionStorage.removeItem(SCROLL_KEY);
+    } catch (error) {
+      return;
+    }
+    if (saved !== null) window.scrollTo(0, parseInt(saved, 10) || 0);
+  });
+
   // Копирование ссылок подписки.
   document.addEventListener("click", function (event) {
     var button = event.target.closest("[data-copy]");
