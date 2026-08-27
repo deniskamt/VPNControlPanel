@@ -792,3 +792,14 @@ def test_node_row_keeps_rare_actions_behind_a_toggle(client, inbound):
     row, rest = page.split('id="more-', 1)
     assert "Перезапустить" not in row, "редкое действие осталось в строке"
     assert "Перезапустить" in rest and "Удалить" in rest
+
+
+def test_checkboxes_are_ours_not_the_system_ones(client, inbound):
+    """Системная галочка на тёмном фоне — белый квадрат из оформления ОС."""
+    css = client.get("/static/css/app.css").text
+
+    assert 'input[type="checkbox"]' in css
+    assert "appearance: none" in css
+    # Отклик на нажатие и своя стрелка у выпадающего списка.
+    assert 'input[type="checkbox"]:active' in css
+    assert "select::-ms-expand" in css

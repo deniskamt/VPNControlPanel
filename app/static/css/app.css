@@ -463,3 +463,109 @@ input.offscreen, .offscreen {
   button:active, .btn:active { transform: none; }
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* ================= Поля выбора ================= */
+/* Системные галочки и переключатели рисуются светлой темой ОС: на тёмном
+   фоне это белые квадраты, которые выбиваются из всего остального. Рисуем
+   свои — форма, цвет и отклик на нажатие тогда наши. */
+input[type="checkbox"],
+input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  display: inline-grid;
+  place-content: center;
+  border: 1.5px solid #3a4256;
+  border-radius: 6px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: background-color var(--dur-ui) var(--ease-out),
+              border-color var(--dur-ui) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+input[type="radio"] { border-radius: 50%; }
+
+/* Галочка — уголок из двух границ: рисуется шрифтом-независимо и одинаково
+   во всех браузерах. */
+input[type="checkbox"]::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  margin-top: -2px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  /* Не из нуля: даже у пустого воздушного шарика есть форма. */
+  transform: rotate(45deg) scale(0.7);
+  opacity: 0;
+  transition: transform var(--dur-ui) var(--ease-out),
+              opacity var(--dur-press) var(--ease-out);
+}
+input[type="radio"]::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  transform: scale(0.5);
+  opacity: 0;
+  transition: transform var(--dur-ui) var(--ease-out),
+              opacity var(--dur-press) var(--ease-out);
+}
+
+input[type="checkbox"]:checked,
+input[type="radio"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+input[type="checkbox"]:checked::after { opacity: 1; transform: rotate(45deg) scale(1); }
+input[type="radio"]:checked::after { opacity: 1; transform: scale(1); }
+
+/* Отклик на нажатие: интерфейс должен показать, что услышал. */
+input[type="checkbox"]:active,
+input[type="radio"]:active { transform: scale(0.92); }
+
+@media (hover: hover) and (pointer: fine) {
+  input[type="checkbox"]:hover,
+  input[type="radio"]:hover { border-color: var(--accent); }
+}
+
+input[type="checkbox"][disabled],
+input[type="radio"][disabled] { opacity: 0.45; cursor: default; }
+
+/* Строка с галочкой целиком кликается и подсвечивается — попасть в
+   квадратик 18 px мышью тяжело, а пальцем тем более. */
+.checks label {
+  padding: 6px 10px 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color var(--dur-ui) ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .checks label:hover { background: rgba(255, 255, 255, 0.04); }
+}
+.checks label:has(input:checked) { background: var(--accent-soft); }
+
+/* Выпадающий список: своя стрелка вместо системной, иначе на тёмном фоне
+   она остаётся светлой кнопкой из оформления ОС. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='none' stroke='%238b93a7' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5 6 6.5l5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 11px;
+  cursor: pointer;
+}
+select::-ms-expand { display: none; }
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+input, select, textarea {
+  transition: border-color var(--dur-ui) ease, box-shadow var(--dur-ui) ease;
+}

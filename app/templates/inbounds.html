@@ -276,10 +276,17 @@
             <div class="muted" style="color:var(--warn)">{{ legacy_inbounds[inbound.id] }}</div>
           {% endif %}
         </td>
-        <td>
-          {{ inbound.nodes | map(attribute='name') | join(', ') or '—' }}
+        {# Список имён целиком разносил строку на три; когда серверов много,
+           важно их число, а имена показываем подсказкой. #}
+        <td class="nowrap" title="{{ inbound.nodes | map(attribute='name') | join(', ') }}">
           {% if not inbound.nodes %}
-            <div class="muted">ни на одном сервере — никто его не получит</div>
+            <span class="muted">ни на одном сервере</span>
+            <div class="muted sub-line">никто его не получит</div>
+          {% elif inbound.nodes | length == 1 %}
+            {{ inbound.nodes[0].name }}
+          {% else %}
+            {{ inbound.nodes | length }} серверов
+            <div class="muted sub-line">{{ inbound.nodes[0].name }} и другие</div>
           {% endif %}
         </td>
         <td>{{ inbound.hosts | length }}</td>
