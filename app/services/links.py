@@ -154,16 +154,26 @@ def _security_params(
 
 
 def build_link(
-    user: User, inbound: Inbound, node: Node, host: Optional[Host] = None
+    user: User,
+    inbound: Inbound,
+    node: Node,
+    host: Optional[Host] = None,
+    remark: Optional[str] = None,
 ) -> Optional[str]:
-    """Одна ссылка для пары (нода, inbound). None — если у юзера нет ключа."""
+    """Одна ссылка для пары (нода, inbound). None — если у юзера нет ключа.
+
+    remark задаётся снаружи, когда названия строк уже разведены между собой
+    (см. user_remarks): клиент различает серверы по названию, и два
+    одинаковых он считает одним.
+    """
     creds = user.proxy_settings(inbound.protocol)
     if creds is None:
         return None
 
     address = (host.address if host and host.address else None) or node.address
     port = (host.port if host and host.port else None) or inbound.port
-    remark = _remark(host.remark if host else DEFAULT_REMARK, node, user, inbound)
+    if remark is None:
+        remark = _remark(host.remark if host else DEFAULT_REMARK, node, user, inbound)
     opts = inbound.settings or {}
 
     # Пустой ключ — не ссылка, а её видимость: клиент возьмёт такую строку
@@ -270,10 +280,57 @@ def user_rows(
     return rows
 
 
+def _row_remark(user: User, row: tuple) -> str:
+    node, inbound, host = row
+    return _remark(host.remark if host else DEFAULT_REMARK, node, user, inbound)
+
+
+def user_remarks(user: User, rows: List[tuple]) -> List[str]:
+    """Названия строк подписки — гарантированно разные.
+
+    Клиентское приложение различает серверы по названию: две строки с
+    одинаковым текстом оно считает одним сервером. На экране это выглядит
+    так, что при выборе одного подсвечиваются оба, и понять, через какой
+    из них идёт трафик, нельзя.
+
+    Совпадения появляются сами: на сервере два подключения, а название по
+    умолчанию собрано из флага и имени сервера — и оба выходят одинаковыми.
+    Поэтому дописываем то, чем строки на самом деле отличаются: сначала
+    транспорт, потом имя подключения, в последнюю очередь номер.
+    """
+    remarks = [_row_remark(user, row) for row in rows]
+
+    duplicates = {name for name in remarks if remarks.count(name) > 1}
+    if not duplicates:
+        return remarks
+
+    for suffix in (lambda row: row[1].network.value, lambda row: row[1].tag):
+        for name in sorted(duplicates):
+            positions = [index for index, item in enumerate(remarks) if item == name]
+            marks = [suffix(rows[index]) for index in positions]
+            # Приписка помогает, только если она у строк разная.
+            if len(set(marks)) != len(marks):
+                continue
+            for index, mark in zip(positions, marks):
+                remarks[index] = f"{remarks[index]} · {mark}"
+        duplicates = {name for name in remarks if remarks.count(name) > 1}
+        if not duplicates:
+            return remarks
+
+    # Названия совпали даже с транспортом и тегом — нумеруем, лишь бы клиент
+    # видел разные строки.
+    for name in sorted(duplicates):
+        positions = [index for index, item in enumerate(remarks) if item == name]
+        for number, index in enumerate(positions, start=1):
+            remarks[index] = f"{remarks[index]} #{number}"
+    return remarks
+
+
 def build_user_links(user: User, nodes: List[Node]) -> List[str]:
     """Все ссылки пользователя: по каждому доступному inbound на каждой ноде."""
+    rows = user_rows(user, nodes)
     links = [
-        build_link(user, inbound, node, host)
-        for node, inbound, host in user_rows(user, nodes)
+        build_link(user, inbound, node, host, remark=remark)
+        for (node, inbound, host), remark in zip(rows, user_remarks(user, rows))
     ]
     return [link for link in links if link]

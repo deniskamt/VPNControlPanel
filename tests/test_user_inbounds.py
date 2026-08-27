@@ -6,6 +6,7 @@
 """
 
 from types import SimpleNamespace
+from urllib.parse import unquote
 
 from app.models.enums import NetworkType, ProxyType, SecurityType, UserStatus
 from app.models.user import User, UserProxy
@@ -156,3 +157,61 @@ def test_ensure_credentials_does_not_touch_a_filled_key():
 
     assert user_service.ensure_credentials(user) == []
     assert proxy.settings["id"] == "uuid-1"
+
+
+def _user_with(inbounds):
+    return SimpleNamespace(
+        username="u", status=UserStatus.active, expired=False, limited=False,
+        inbounds=inbounds,
+        proxy_settings=lambda p: {"id": "uuid-1"},
+        allowed_on=lambda node_id: True,
+    )
+
+
+def test_two_inbounds_on_one_server_get_different_names():
+    """Клиент различает серверы по названию: одинаковые он считает одним и
+    подсвечивает оба сразу."""
+    xhttp = make_inbound(1, ProxyType.vless, network=NetworkType.xhttp,
+                         security=SecurityType.none, tag="XHTTP-CF")
+    reality = make_inbound(2, ProxyType.vless, security=SecurityType.reality,
+                           tag="VLESS-REALITY",
+                           settings={"publicKey": "PUB", "shortIds": ["ab12"],
+                                     "serverNames": ["m.com"]})
+    node = make_node([xhttp, reality])
+    node.name = "Netherlands - Amsterdam"
+    user = _user_with([xhttp, reality])
+
+    names = [link.rsplit("#", 1)[-1] for link in build_user_links(user, [node])]
+
+    assert len(names) == 2
+    assert len(set(names)) == 2, names
+    assert all("Netherlands" in unquote(name) for name in names)
+    # Различает транспорт: он же виден человеку в приложении.
+    assert {"xhttp", "tcp"} == {unquote(name).rsplit("·", 1)[-1].strip() for name in names}
+
+
+def test_single_inbound_name_is_left_alone():
+    inbound = make_inbound(1, ProxyType.vless, security=SecurityType.reality,
+                           settings={"publicKey": "PUB", "shortIds": ["ab12"],
+                                     "serverNames": ["m.com"]})
+    node = make_node([inbound])
+    user = _user_with([inbound])
+
+    name = unquote(build_user_links(user, [node])[0].rsplit("#", 1)[-1])
+
+    assert name == "🇳🇱 NL", "к одиночной строке ничего дописывать не нужно"
+
+
+def test_same_transport_falls_back_to_the_inbound_tag():
+    first = make_inbound(1, ProxyType.vless, network=NetworkType.xhttp,
+                         security=SecurityType.none, tag="XHTTP-CF")
+    second = make_inbound(2, ProxyType.vless, network=NetworkType.xhttp,
+                          security=SecurityType.none, tag="XHTTP-DIRECT")
+    node = make_node([first, second])
+    user = _user_with([first, second])
+
+    names = [unquote(link.rsplit("#", 1)[-1]) for link in build_user_links(user, [node])]
+
+    assert len(set(names)) == 2, names
+    assert any("XHTTP-CF" in name for name in names)
+    assert any("XHTTP-DIRECT" in name for name in names)

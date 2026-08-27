@@ -15,10 +15,9 @@ from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.models.user import User
 from app.services.links import (
-    DEFAULT_REMARK,
     _effective_security,
-    _remark,
     build_link,
+    user_remarks,
     user_rows,
 )
 
@@ -48,28 +47,35 @@ class Entry:
         return f"{self.node.id}-{self.inbound.id}-{host_part}"
 
 
-def _entry(user: User, inbound: Inbound, node: Node, host: Optional[Host]) -> Entry:
-    options = inbound.settings or {}
+def _entry(
+    user: User, inbound: Inbound, node: Node, host: Optional[Host], remark: str
+) -> Entry:
     address = (host.address if host and host.address else None) or node.address
     port = (host.port if host and host.port else None) or inbound.port
     return Entry(
         node=node,
         inbound=inbound,
         host=host,
-        remark=_remark(host.remark if host else DEFAULT_REMARK, node, user, inbound),
+        remark=remark,
         address=address,
         port=port,
         network=inbound.network.value,
         security=_effective_security(inbound, host),
-        link=build_link(user, inbound, node, host),
+        link=build_link(user, inbound, node, host, remark=remark),
     )
 
 
 def entries_for(user: User, nodes: List[Node]) -> List[Entry]:
-    """Строки подписки конкретного пользователя, в порядке показа у клиента."""
+    """Строки подписки конкретного пользователя, в порядке показа у клиента.
+
+    Названия берём те же, что уедут в ссылках, — вместе с разведением
+    совпадений. Иначе администратор видел бы в панели одно, а человек в
+    приложении другое.
+    """
+    rows = user_rows(user, nodes)
     return [
-        _entry(user, inbound, node, host)
-        for node, inbound, host in user_rows(user, nodes)
+        _entry(user, inbound, node, host, remark)
+        for (node, inbound, host), remark in zip(rows, user_remarks(user, rows))
     ]
 
 
