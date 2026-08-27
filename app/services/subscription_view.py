@@ -134,19 +134,20 @@ def hidden_entries(user: User, nodes: List[Node]) -> List[dict]:
     return reasons
 
 
-def move_node(nodes: List[Node], node_id: int, up: bool) -> bool:
-    """Передвинуть сервер на строку выше или ниже в подписке.
+def reorder(items: list, item_id: int, up: bool) -> bool:
+    """Передвинуть запись на строку выше или ниже в общем порядке.
 
-    Приложение показывает конфигурации в том порядке, в каком они пришли,
-    поэтому порядок серверов — это первое, что видит человек в списке.
+    Годится и для серверов, и для хостов: и те и другие сортируются парой
+    (sort_order, id). Приложение показывает конфигурации в том порядке, в
+    каком они пришли, поэтому это ровно то, что увидит человек.
 
-    Нумерацию раздаём заново всему списку: по умолчанию у всех серверов
-    sort_order равен нулю, и обмен двух одинаковых значений ничего бы не
-    изменил. Возвращает False, если двигать некуда.
+    Нумерацию раздаём заново всему списку: по умолчанию sort_order у всех
+    нулевой, и обмен двух одинаковых значений ничего бы не изменил.
+    Возвращает False, если двигать некуда.
     """
-    ordered = sorted(nodes, key=lambda item: (item.sort_order, item.id))
+    ordered = sorted(items, key=lambda item: (item.sort_order, item.id))
     index = next(
-        (position for position, node in enumerate(ordered) if node.id == node_id), None
+        (position for position, item in enumerate(ordered) if item.id == item_id), None
     )
     if index is None:
         return False
@@ -156,7 +157,30 @@ def move_node(nodes: List[Node], node_id: int, up: bool) -> bool:
     if moved:
         ordered[index], ordered[target] = ordered[target], ordered[index]
 
-    for position, node in enumerate(ordered):
-        node.sort_order = position
+    for position, item in enumerate(ordered):
+        item.sort_order = position
 
     return moved
+
+
+def group_moves(entries: List[Entry]) -> dict:
+    """Какие строки внутри одного сервера можно двигать и куда.
+
+    Двигаются только строки с хостом: строка «по умолчанию» на подключении
+    одна, переставлять её не с чем. Ключ — Entry.key, как в формах.
+    """
+    groups: dict = {}
+    for entry in entries:
+        groups.setdefault((entry.node.id, entry.inbound.id), []).append(entry)
+
+    moves: dict = {}
+    for members in groups.values():
+        movable = [item for item in members if item.host]
+        if len(movable) < 2:
+            continue
+        for position, entry in enumerate(movable):
+            moves[entry.key] = {
+                "up": position > 0,
+                "down": position < len(movable) - 1,
+            }
+    return moves

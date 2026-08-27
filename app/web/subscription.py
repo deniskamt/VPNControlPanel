@@ -91,6 +91,7 @@ async def subscription_page(
             "inbounds": inbounds,
             "user": user,
             "entries": entries,
+            "row_moves": subscription_view.group_moves(entries),
             "hidden": hidden,
             "securities": [item.value for item in SecurityType],
             "remark_tokens": REMARK_TOKENS,
@@ -244,6 +245,46 @@ async def delete_host(
     return _redirect(int(user_id) if user_id.strip().isdigit() else None)
 
 
+@router.post("/hosts/{host_id}/move")
+async def move_host(
+    host_id: int,
+    direction: str = Form(...),
+    node_id: str = Form(default=""),
+    user_id: str = Form(default=""),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Поднять или опустить запись внутри одного сервера.
+
+    У сервера может быть несколько записей на одно подключение — например,
+    прямая и через промежуточный узел. Порядок между ними решает, что
+    человек увидит в приложении первым.
+    """
+    host = await session.get(Host, host_id)
+    if host is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Хост не найден")
+
+    result = await session.execute(
+        select(Host).where(Host.inbound_id == host.inbound_id)
+    )
+    # Двигаем внутри той же группы, что видна на странице: хосты этого
+    # подключения, применимые к этому серверу.
+    node = int(node_id) if node_id.strip().isdigit() else None
+    hosts = [item for item in result.scalars().all() if item.node_id in (None, node)]
+
+    if subscription_view.reorder(hosts, host_id, up=direction == "up"):
+        await log_action(
+            session,
+            action="host.move",
+            actor=admin.username,
+            target=str(host_id),
+            target_type="host",
+            message="выше в подписке" if direction == "up" else "ниже в подписке",
+        )
+    await session.commit()
+    return _redirect(int(user_id) if user_id.strip().isdigit() else None)
+
+
 @router.post("/nodes/{node_id}/move")
 async def move_node(
     node_id: int,
@@ -262,7 +303,7 @@ async def move_node(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сервер не найден")
 
     nodes = list((await session.execute(select(Node))).scalars().all())
-    if subscription_view.move_node(nodes, node_id, up=direction == "up"):
+    if subscription_view.reorder(nodes, node_id, up=direction == "up"):
         await log_action(
             session,
             action="node.move",
