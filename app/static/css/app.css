@@ -193,7 +193,20 @@ button[disabled], .btn[disabled] { opacity: 0.45; cursor: default; transform: no
 button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.danger, .btn.danger { color: var(--err); border-color: rgba(239,93,93,0.4); }
 button.small, .btn.small { padding: 4px 9px; font-size: 12px; }
-.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* Колонка с кнопками в таблице: width 1% с nowrap заставляет её сжаться до
+   содержимого. Без этого браузер делит ширину поровну, кнопки складываются
+   в столбик и строка вырастает на пол-экрана, а имени сервера не хватает
+   места и оно переносится. */
+td:has(> .actions) { width: 1%; white-space: nowrap; text-align: right; }
+td > .actions { flex-wrap: nowrap; justify-content: flex-end; }
+
+/* Дополнительные действия открываются отдельной строкой под сервером —
+   тем же приёмом, что и формы установки и правки. Всплывающий список
+   внутри ячейки распирал строку и обрезался прокруткой таблицы. */
+.row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+}
 form.inline { display: inline; }
 
 /* --- Прогресс трафика --- */
@@ -275,6 +288,7 @@ details.editor > div { padding: 0 16px 16px; }
 
 /* ================= Шаблоны подключений ================= */
 .preset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+
 .preset {
   position: relative;
   border: 1px solid var(--border);
@@ -284,13 +298,26 @@ details.editor > div { padding: 0 16px 16px; }
   background: var(--bg);
   display: block;
   margin: 0;
-  transition: border-color .15s, background .15s;
+  transition: border-color var(--dur-ui) ease, background-color var(--dur-ui) ease;
 }
-.preset:hover { border-color: var(--accent); }
+@media (hover: hover) and (pointer: fine) {
+  .preset:hover { border-color: var(--accent); }
+}
 .preset input { position: absolute; opacity: 0; pointer-events: none; }
 .preset input:checked ~ .preset-body { color: var(--text); }
 .preset:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
-.preset .preset-title { font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+/* Значок «рекомендуется» отжимал заголовок и ломал его на три строки —
+   переносим значок под название, когда места не хватает. */
+.preset .preset-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  letter-spacing: -0.01em;
+}
+.preset .preset-title .tag { flex-shrink: 0; }
 .preset .preset-desc { color: var(--muted); font-size: 12px; line-height: 1.45; }
 .preset .preset-note { color: var(--muted); font-size: 11px; margin-top: 8px; }
 .preset .tag {
@@ -390,10 +417,24 @@ details.editor > div { padding: 0 16px 16px; }
 
 .online-text { color: var(--ok); }
 
+/* Ошибка сервера — длинная подсказка с командой. Она должна переноситься,
+   иначе растягивает таблицу и уезжает за край экрана. */
+.node-error {
+  color: var(--err);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: normal;
+  word-break: break-word;
+}
+
 /* Точка и логин — всегда одной строкой: перенос делает из них две. */
-.who { display: flex; align-items: center; gap: 8px; }
+.who { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .who .dot { margin: 0; flex-shrink: 0; }
 .nowrap { white-space: nowrap; }
+
+/* Вторая строка в ячейке: подробность к главному значению. Мельче и тише,
+   чтобы взгляд сначала цеплял состояние, а потом уже детали. */
+.sub-line { font-size: 11px; margin-top: 3px; }
 
 /* Поле нужно только для копирования — с глаз убираем, но оставляем
    доступным: запасной путь копирования выделяет его текст. */

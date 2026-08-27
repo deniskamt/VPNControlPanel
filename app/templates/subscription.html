@@ -129,19 +129,26 @@
   <table>
     <thead>
       <tr>
-        <th>Название у клиента</th><th>Сервер</th><th>Подключение</th>
-        <th>Адрес : порт</th><th>Транспорт</th><th>Откуда</th><th></th>
+        <th>Название у клиента</th><th>Подключение</th>
+        <th>Адрес : порт</th><th>Откуда</th><th></th>
       </tr>
     </thead>
     <tbody>
     {% for entry in entries %}
       <tr>
-        <td><b>{{ entry.remark | flags }}</b></td>
-        <td>{{ flag(entry.node.country) }} {{ entry.node.name }}</td>
-        <td>{{ entry.inbound.tag }}</td>
-        <td class="mono">{{ entry.address }}:{{ entry.port }}</td>
-        <td>{{ entry.network }} / {{ entry.security.value }}</td>
-        <td class="muted">{{ entry.source }}</td>
+        {# Сервер и транспорт — уточнения к названию и подключению, поэтому
+           стоят второй строкой в той же ячейке: семь колонок не оставляли
+           места кнопкам. #}
+        <td class="nowrap">
+          <b>{{ entry.remark | flags }}</b>
+          <div class="muted sub-line">{{ entry.node.name }}</div>
+        </td>
+        <td class="nowrap">
+          {{ entry.inbound.tag }}
+          <div class="muted sub-line">{{ entry.network }} / {{ entry.security.value }}</div>
+        </td>
+        <td class="mono nowrap">{{ entry.address }}:{{ entry.port }}</td>
+        <td class="muted nowrap">{{ entry.source }}</td>
         <td>
           <div class="actions">
             {# Порядок сквозной: строку можно поставить между записями
@@ -182,7 +189,7 @@
         </td>
       </tr>
       <tr id="entry-{{ entry.key }}" hidden>
-        <td colspan="7">
+        <td colspan="5">
           {% if entry.host %}
             <form method="post" action="/subscription/hosts/{{ entry.host.id }}/update">
               <input type="hidden" name="user_id" value="{{ user.id }}">

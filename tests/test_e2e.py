@@ -780,3 +780,15 @@ def test_users_page_shows_presence(client, auth, inbound):
     user_id = re.search(r'value="(\d+)"[^>]*>\s*user_12345', client.get("/subscription").text)
     card = client.get(f"/users/{user_id.group(1)}").text
     assert 'class="dot ' in card
+
+
+def test_node_row_keeps_rare_actions_behind_a_toggle(client, inbound):
+    """Восемь кнопок в строке растягивали её на пол-экрана."""
+    page = client.get("/nodes").text
+
+    # Наружу — то, чем пользуются каждый день.
+    assert ">Конфиг<" in page and ">Изменить<" in page and ">Ещё<" in page
+    # Остальное — в скрытой строке, а не в самой строке сервера.
+    row, rest = page.split('id="more-', 1)
+    assert "Перезапустить" not in row, "редкое действие осталось в строке"
+    assert "Перезапустить" in rest and "Удалить" in rest

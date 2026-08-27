@@ -108,18 +108,20 @@
   <table>
     <thead>
       <tr>
-        <th>Сервер</th><th>Статус</th><th>Xray</th><th>CPU / RAM</th>
-        <th>Трафик</th><th>Подключения</th><th>Последний ответ</th><th></th>
+        <th>Сервер</th><th>Состояние</th><th>Нагрузка</th>
+        <th>Трафик</th><th>Подключения</th><th></th>
       </tr>
     </thead>
     <tbody>
     {% for node in nodes %}
       <tr>
         <td>
-          <div>{{ flag(node.country) }} {{ node.name }}</div>
+          <div class="who">{{ flag(node.country) }} {{ node.name }}</div>
           <div class="mono muted">{{ node.address }}:{{ node.agent_port }}</div>
         </td>
-        <td>
+        {# Состояние и время ответа — про одно и то же, поэтому в одной
+           ячейке: колонок было восемь, и кнопкам не оставалось места. #}
+        <td class="nowrap">
           {% if not node.is_enabled %}
             <span class="badge mute">выключен</span>
           {% elif node.status.value == 'connected' %}
@@ -129,32 +131,54 @@
           {% else %}
             <span class="badge warn">подключение</span>
           {% endif %}
+          <div class="muted sub-line">{{ node.last_seen_at | last_seen }}</div>
         </td>
-        <td class="mono">
-          {{ node.xray_version or '—' }}
-          {% if agent_outdated[node.id] and node.last_seen_at %}
-            <div><span class="badge warn" title="Агент версии {{ node.agent_version or '?' }}, в панели {{ agent_version }}">агент устарел</span></div>
-          {% endif %}
+        <td class="nowrap">
+          {% if node.cpu_percent is not none %}
+            CPU {{ node.cpu_percent }}% · RAM {{ node.mem_percent }}%
+          {% else %}<span class="muted">—</span>{% endif %}
+          <div class="muted sub-line">
+            Xray {{ node.xray_version or '—' }}
+            {% if agent_outdated[node.id] and node.last_seen_at %}
+              <span class="badge warn" title="Агент версии {{ node.agent_version or '?' }}, в панели {{ agent_version }}">агент устарел</span>
+            {% endif %}
+          </div>
         </td>
-        <td>{% if node.cpu_percent is not none %}{{ node.cpu_percent }}% / {{ node.mem_percent }}%{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td>{{ (node.uplink + node.downlink) | bytes }}</td>
+        <td class="nowrap">{{ (node.uplink + node.downlink) | bytes }}</td>
         <td>{{ node.inbounds | length }}</td>
-        <td class="muted">{{ node.last_seen_at | dt }}</td>
         <td>
+          {# Наружу — то, чем пользуются каждый день. Остальное под «Ещё»:
+             восемь кнопок в столбик растягивали строку на пол-экрана.
+             Обновление агента выносим наверх, только когда он устарел. #}
           <div class="actions">
-            <button class="small" data-toggle="#install-{{ node.id }}">Установка</button>
             <button class="small" data-toggle="#node-{{ node.id }}">Изменить</button>
             <a class="btn small" href="/nodes/{{ node.id }}/config">Конфиг</a>
+            {% if agent_outdated[node.id] %}
+            <form class="inline" method="post" action="/nodes/{{ node.id }}/update-agent"
+                  data-confirm="Обновить агента на {{ node.name }} до версии {{ agent_version }}? Xray перезапустится, подключения оборвутся на несколько секунд.">
+              <button class="small primary" type="submit" title="Обновить агента до версии {{ agent_version }}">Обновить</button>
+            </form>
+            {% endif %}
+            <button class="small" data-toggle="#more-{{ node.id }}">Ещё</button>
+          </div>
+        </td>
+      </tr>
+      <tr id="more-{{ node.id }}" hidden>
+        <td colspan="6">
+          <div class="row-actions">
+            <button class="small" data-toggle="#install-{{ node.id }}">Установка</button>
             <form class="inline" method="post" action="/nodes/{{ node.id }}/sync">
               <button class="small" type="submit">Синхронизировать</button>
             </form>
             <form class="inline" method="post" action="/nodes/{{ node.id }}/restart">
               <button class="small" type="submit">Перезапустить</button>
             </form>
+            {% if not agent_outdated[node.id] %}
             <form class="inline" method="post" action="/nodes/{{ node.id }}/update-agent"
                   data-confirm="Обновить агента на {{ node.name }} до версии {{ agent_version }}? Xray перезапустится, подключения оборвутся на несколько секунд.">
-              <button class="small {{ 'primary' if agent_outdated[node.id] else '' }}" type="submit">Обновить агента</button>
+              <button class="small" type="submit">Обновить агента</button>
             </form>
+            {% endif %}
             <form class="inline" method="post" action="/nodes/{{ node.id }}/toggle">
               <button class="small" type="submit">{{ 'Выключить' if node.is_enabled else 'Включить' }}</button>
             </form>
@@ -167,11 +191,11 @@
       </tr>
       {% if node.message and node.status.value == 'error' %}
       <tr>
-        <td colspan="8" class="mono" style="color:var(--err)">{{ node.message }}</td>
+        <td colspan="6" class="node-error">{{ node.message }}</td>
       </tr>
       {% endif %}
       <tr id="install-{{ node.id }}" hidden>
-        <td colspan="8">
+        <td colspan="6">
           <p class="muted" style="margin-top:0">
             Выполните на сервере <b>{{ node.address }}</b> под root — токен уже подставлен:
           </p>
@@ -218,7 +242,7 @@ python3 selftest_node.py</div>
         </td>
       </tr>
       <tr id="node-{{ node.id }}" hidden>
-        <td colspan="8">{{ node_form('/nodes/' ~ node.id ~ '/update', node, 'Сохранить', country_options[node.id]) }}</td>
+        <td colspan="6">{{ node_form('/nodes/' ~ node.id ~ '/update', node, 'Сохранить', country_options[node.id]) }}</td>
       </tr>
     {% endfor %}
     </tbody>
