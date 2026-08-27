@@ -64,6 +64,14 @@
 <div class="panel">
   <header>Трафик по часам (24 ч)</header>
   <div class="body">
+    {% if not series | selectattr('value') | list %}
+      {# Пустая рамка высотой в треть экрана ничего не сообщает. Лучше
+         сказать словами, почему она пустая. #}
+      <div class="empty">
+        Пока пусто — трафик появится здесь, когда через серверы пойдут
+        подключения.
+      </div>
+    {% else %}
     <div class="chart">
       {% for point in series %}
         <div class="col" title="{{ point.hour }} — {{ point.value | bytes }}">
@@ -76,6 +84,7 @@
         <span>{% if loop.index0 % 4 == 0 %}{{ point.hour }}{% endif %}</span>
       {% endfor %}
     </div>
+    {% endif %}
   </div>
 </div>
 

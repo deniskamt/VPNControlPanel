@@ -767,3 +767,16 @@ def test_pages_show_flag_images(client, inbound):
     # В названии конфигурации флаг тоже подменяется картинкой, а сам текст
     # уходит клиенту с эмодзи — иначе приложение не нарисует иконку страны.
     assert "/static/flags/de.svg" in client.get("/subscription").text
+
+
+def test_users_page_shows_presence(client, auth, inbound):
+    """Точка «в сети» и понятный статус вместо значения из базы."""
+    page = client.get("/users").text
+    assert 'class="dot offline"' in page, "нет точки присутствия"
+    assert "не подключался" in page
+    # Статус словом, а не «active».
+    assert "активен" in page
+
+    user_id = re.search(r'value="(\d+)"[^>]*>\s*user_12345', client.get("/subscription").text)
+    card = client.get(f"/users/{user_id.group(1)}").text
+    assert 'class="dot ' in card

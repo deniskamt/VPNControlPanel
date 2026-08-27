@@ -4,7 +4,11 @@
 {% block content %}
 <div class="page-head">
   <div>
-    <h1>{{ user.username }}</h1>
+    <h1>
+      <span class="dot {{ 'online' if is_online(user.online_at) else 'offline' }}"
+            title="{{ user.online_at | last_seen }}"></span>
+      {{ user.username }}
+    </h1>
     <div class="sub">
       создан {{ user.created_at | dt }}
       {% if user.telegram_id %}· Telegram ID {{ user.telegram_id }}{% endif %}
@@ -16,7 +20,7 @@
 <div class="cards">
   <div class="card">
     <div class="label">Статус</div>
-    <div class="value" style="font-size:18px">{{ user.status.value }}</div>
+    <div class="value" style="font-size:18px">{{ status_title(user.status) }}</div>
     <div class="hint">изменён {{ user.last_status_change | dt }}</div>
   </div>
   <div class="card">
@@ -34,8 +38,12 @@
   </div>
   <div class="card">
     <div class="label">Последняя активность</div>
-    <div class="value" style="font-size:18px">{{ user.online_at | dt }}</div>
-    <div class="hint">{{ user.sub_last_user_agent or '—' }}</div>
+    <div class="value {{ 'online-text' if is_online(user.online_at) else '' }}"
+         style="font-size:18px">{{ user.online_at | last_seen }}</div>
+    <div class="hint">
+      {% if user.online_at %}{{ user.online_at | dt }} · {% endif %}
+      {{ user.sub_last_user_agent or '—' }}
+    </div>
   </div>
   <div class="card">
     <div class="label">Устройства</div>

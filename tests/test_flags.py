@@ -107,3 +107,21 @@ def test_asset_url_changes_with_the_file():
     assert url.startswith("/static/css/app.css?v=")
     # Несуществующий файл не должен ронять страницу.
     assert templates.asset("css/нет.css") == "/static/css/нет.css"
+
+
+def test_status_badge_explains_itself():
+    from app.models.enums import UserStatus
+
+    badge = str(templates.status_badge(UserStatus.on_hold))
+    # Значение из базы («on_hold») администратору ничего не говорит.
+    assert "ожидание" in badge and "on_hold" not in badge
+    assert "title=" in badge, "у значка нет пояснения"
+    assert templates.status_title(UserStatus.limited) == "лимит"
+
+
+def test_human_bytes_stays_short_in_tables():
+    # Два знака после запятой удлиняли ячейку так, что строка переносилась.
+    assert templates.human_bytes(200 * 1024**3) == "200 GB"
+    assert templates.human_bytes(1536) == "1.5 KB"
+    assert templates.human_bytes(512) == "512 B"
+    assert templates.human_bytes(0) == "0 B"

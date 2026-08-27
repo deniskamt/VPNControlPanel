@@ -84,7 +84,7 @@
     <thead>
       <tr>
         <th>Логин</th><th>Статус</th><th>Трафик</th><th>Подписка до</th>
-        <th>Онлайн</th><th>Ссылка</th><th></th>
+        <th>Онлайн</th><th>Подписка</th><th></th>
       </tr>
     </thead>
     <tbody>
@@ -92,16 +92,15 @@
       {% set user = row.user %}
       <tr>
         <td>
-          <a href="/users/{{ user.id }}">{{ user.username }}</a>
+          {% set online = is_online(user.online_at) %}
+          <div class="who">
+            <span class="dot {{ 'online' if online else 'offline' }}"
+                  title="{{ user.online_at | last_seen }}"></span>
+            <a href="/users/{{ user.id }}">{{ user.username }}</a>
+          </div>
           {% if user.note %}<div class="muted">{{ user.note }}</div>{% endif %}
         </td>
-        <td>
-          {% if user.status.value == 'active' %}<span class="badge ok">активен</span>
-          {% elif user.status.value == 'expired' %}<span class="badge warn">истёк</span>
-          {% elif user.status.value == 'limited' %}<span class="badge warn">лимит</span>
-          {% elif user.status.value == 'on_hold' %}<span class="badge mute">ожидание</span>
-          {% else %}<span class="badge err">отключён</span>{% endif %}
-        </td>
+        <td>{{ status_badge(user.status) }}</td>
         <td>
           {{ user.used_traffic | bytes }}{% if user.data_limit %} / {{ user.data_limit | bytes }}{% endif %}
           {% if user.data_limit %}
@@ -110,14 +109,13 @@
                                 style="width: {{ percent }}%"></i></div>
           {% endif %}
         </td>
-        <td>{{ user.expire | expire }}</td>
-        <td class="muted">{{ user.online_at | dt }}</td>
+        <td class="nowrap">{{ user.expire | expire }}</td>
+        <td class="nowrap {{ 'online-text' if online else 'muted' }}">{{ user.online_at | last_seen }}</td>
         <td>
-          <div class="copy-field">
-            <input type="text" class="mono" readonly value="{{ row.subscription_url }}"
-                   id="sub-{{ user.id }}">
-            <button class="small" data-copy="#sub-{{ user.id }}">Копировать</button>
-          </div>
+          <input type="text" class="offscreen" readonly tabindex="-1"
+                 value="{{ row.subscription_url }}" id="sub-{{ user.id }}">
+          <button class="small" data-copy="#sub-{{ user.id }}"
+                  title="{{ row.subscription_url }}">Копировать</button>
         </td>
         <td>
           <form class="inline" method="post" action="/users/{{ user.id }}/delete"

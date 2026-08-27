@@ -8,6 +8,7 @@ from typing import Optional
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
+from app.services import presence
 from app.services.flags import country_code, country_flag
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -73,15 +74,50 @@ def asset(path: str) -> str:
     return f"/static/{name}?v={stamp}"
 
 
+# Статусы пользователя по-русски и с пояснением, за что они выставляются.
+# Раньше в карточке стояло значение из базы («on_hold»), и понять, чем оно
+# отличается от «disabled», можно было только по коду.
+STATUS_TITLES = {
+    "active": ("активен", "ok", "подписка работает"),
+    "expired": ("истекла", "warn", "закончился срок"),
+    "limited": ("лимит", "warn", "закончился трафик"),
+    "on_hold": ("ожидание", "mute", "оплачено, отсчёт срока ещё не начался"),
+    "disabled": ("отключён", "err", "выключен вручную"),
+}
+
+
+def status_title(status) -> str:
+    """Название статуса по-русски."""
+    key = getattr(status, "value", status)
+    return STATUS_TITLES.get(key, (str(key), "mute", ""))[0]
+
+
+def status_badge(status) -> Markup:
+    """Значок статуса: цвет и подпись — из одного места."""
+    key = getattr(status, "value", status)
+    title, tone, hint = STATUS_TITLES.get(key, (str(key), "mute", ""))
+    return Markup(
+        f'<span class="badge {tone}" title="{escape(hint)}">{escape(title)}</span>'
+    )
+
+
 def human_bytes(value: Optional[int]) -> str:
+    """Объём трафика для таблицы.
+
+    Две цифры после запятой в списке на полсотни строк только мешают: они
+    ничего не решают, но удлиняют ячейку так, что она переносится. Держим
+    один знак и убираем нулевой хвост.
+    """
     if not value:
         return "0 B"
     size = float(value)
     for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
         if size < 1024 or unit == "PB":
-            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.2f} {unit}"
+            if unit == "B":
+                return f"{size:.0f} {unit}"
+            return f"{size:.1f}".rstrip("0").rstrip(".") + f" {unit}"
         size /= 1024
-    return f"{size:.2f} PB"
+    return f"{size:.1f} PB"
 
 
 def human_datetime(value: Optional[datetime]) -> str:
@@ -129,4 +165,9 @@ templates.env.globals["usage_percent"] = usage_percent
 templates.env.globals["flag"] = flag
 templates.env.filters["flags"] = flag_text
 templates.env.globals["asset"] = asset
+# Точка «в сети» рядом с логином: одна и та же логика в списке и в карточке.
+templates.env.globals["is_online"] = presence.is_online
+templates.env.globals["status_title"] = status_title
+templates.env.globals["status_badge"] = status_badge
+templates.env.filters["last_seen"] = presence.last_seen
 templates.env.globals["now"] = datetime.utcnow

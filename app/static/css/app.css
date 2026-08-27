@@ -11,6 +11,16 @@
   --warn: #e5a13a;
   --err: #ef5d5d;
   --radius: 10px;
+
+  /* Кривые — свои, а не встроенные: у стандартных не хватает резкости,
+     и движение выглядит вялым. ease-in в интерфейсе не используем никогда:
+     он тормозит в первый момент, именно тогда, когда человек смотрит. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  /* Отклик на нажатие, обычное движение интерфейса. Дольше 300 мс в панели
+     не анимируем ничего: она рабочая, а не витринная. */
+  --dur-press: 120ms;
+  --dur-ui: 180ms;
 }
 
 * { box-sizing: border-box; }
@@ -19,11 +29,18 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
+/* Трекинг зависит от размера: крупный текст без сжатия выглядит рыхлым,
+   мелкий — наоборот, разреженным. Одного значения на всё не бывает. */
+h1, h2, h3 { letter-spacing: -0.02em; line-height: 1.2; }
+
 a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
+@media (hover: hover) and (pointer: fine) {
+  a:hover { text-decoration: underline; }
+}
 
 .layout { display: flex; min-height: 100vh; }
 
@@ -50,7 +67,10 @@ a:hover { text-decoration: underline; }
   color: var(--muted);
   border-left: 2px solid transparent;
 }
-.sidebar nav a:hover { color: var(--text); background: rgba(255,255,255,0.03); text-decoration: none; }
+.sidebar nav a { transition: color var(--dur-ui) ease, background-color var(--dur-ui) ease; }
+@media (hover: hover) and (pointer: fine) {
+  .sidebar nav a:hover { color: var(--text); background: rgba(255,255,255,0.03); text-decoration: none; }
+}
 .sidebar nav a.active {
   color: var(--text);
   background: var(--accent-soft);
@@ -73,7 +93,13 @@ a:hover { text-decoration: underline; }
   padding: 16px;
 }
 .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
-.card .value { font-size: 24px; font-weight: 600; margin-top: 6px; }
+.card .value {
+  font-size: 24px;
+  font-weight: 600;
+  margin-top: 6px;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
 .card .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
 
 .panel {
@@ -97,9 +123,11 @@ a:hover { text-decoration: underline; }
 /* --- Таблицы --- */
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 10px 16px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
-th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
 tr:last-child td { border-bottom: none; }
-tbody tr:hover { background: rgba(255,255,255,0.02); }
+@media (hover: hover) and (pointer: fine) {
+  tbody tr:hover { background: rgba(255,255,255,0.02); }
+}
 .table-wrap { overflow-x: auto; }
 
 /* --- Статусы --- */
@@ -150,8 +178,18 @@ button, .btn {
   color: var(--text);
   font: inherit;
   cursor: pointer;
+  /* Перечисляем свойства поимённо: transition: all задевает лишнее и
+     заставляет браузер считать то, что меняться не должно. */
+  transition: transform var(--dur-press) var(--ease-out),
+              border-color var(--dur-ui) ease,
+              background-color var(--dur-ui) ease,
+              opacity var(--dur-ui) ease;
 }
-button:hover, .btn:hover { border-color: var(--accent); text-decoration: none; }
+button:active, .btn:active { transform: scale(0.97); }
+button[disabled], .btn[disabled] { opacity: 0.45; cursor: default; transform: none; }
+@media (hover: hover) and (pointer: fine) {
+  button:hover, .btn:hover { border-color: var(--accent); text-decoration: none; }
+}
 button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.danger, .btn.danger { color: var(--err); border-color: rgba(239,93,93,0.4); }
 button.small, .btn.small { padding: 4px 9px; font-size: 12px; }
@@ -233,7 +271,7 @@ details.editor > div { padding: 0 16px 16px; }
 .steps li.done .title { color: var(--muted); text-decoration: line-through; }
 .steps .hint { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .progress { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
-.progress > i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.progress > i { display: block; height: 100%; background: var(--accent); transition: width var(--dur-ui) var(--ease-out); }
 
 /* ================= Шаблоны подключений ================= */
 .preset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
@@ -330,4 +368,57 @@ details.editor > div { padding: 0 16px 16px; }
   vertical-align: -2px;
   margin-right: 2px;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, .12);
+}
+
+/* ================= Присутствие ================= */
+/* Зелёная точка у логина: человек прямо сейчас гоняет трафик. Пульсация
+   нужна, чтобы отличить «в сети» от «просто зелёный кружок», но она
+   намеренно медленная и без движения самой точки — иначе в таблице на
+   полсотни строк рябит в глазах. */
+.dot.online {
+  background: var(--ok);
+  box-shadow: 0 0 0 0 rgba(53, 196, 138, 0.5);
+  animation: pulse 2s var(--ease-out) infinite;
+}
+.dot.offline { background: var(--muted); opacity: 0.5; }
+
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(53, 196, 138, 0.45); }
+  70%  { box-shadow: 0 0 0 6px rgba(53, 196, 138, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(53, 196, 138, 0); }
+}
+
+.online-text { color: var(--ok); }
+
+/* Точка и логин — всегда одной строкой: перенос делает из них две. */
+.who { display: flex; align-items: center; gap: 8px; }
+.who .dot { margin: 0; flex-shrink: 0; }
+.nowrap { white-space: nowrap; }
+
+/* Поле нужно только для копирования — с глаз убираем, но оставляем
+   доступным: запасной путь копирования выделяет его текст. */
+/* input[type=text] задаёт ширину 100% и по весу селектора перебивает
+   простой класс — поэтому имя тега здесь обязательно. */
+input.offscreen, .offscreen {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Клавиатурный фокус должен быть виден — но только при работе с клавиатуры,
+   иначе рамка появляется и после обычного клика мышью. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Движение вредит не всем одинаково: при выключенной анимации в системе
+   оставляем цвет и прозрачность, убираем перемещение и пульсацию. */
+@media (prefers-reduced-motion: reduce) {
+  .dot.online { animation: none; box-shadow: 0 0 0 2px rgba(53, 196, 138, 0.35); }
+  button:active, .btn:active { transform: none; }
+  * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
