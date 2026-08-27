@@ -29,6 +29,9 @@ from typing import Any, Dict, List, Optional
 
 from app.models.enums import NetworkType, ProxyType, SecurityType
 from app.services import shadowsocks, xhttp
+import secrets
+
+from app.services import hysteria
 from app.services.keys import generate_path, generate_reality_keypair, generate_short_id
 
 
@@ -121,6 +124,26 @@ PRESETS: List[Preset] = [
         notes=[
             "Домен за CDN укажите в поле SNI, потом добавьте его в «Хостах»",
             "Порт наружу открывает Cloudflare: 443 или 2053/2083/2087/2096",
+        ],
+    ),
+    Preset(
+        key="hysteria2",
+        title="Hysteria2 (QUIC)",
+        description=(
+            "Для сетей с потерями: мобильный интернет, вокзальный Wi-Fi. "
+            "Работает поверх QUIC и восстанавливает потери сам, поэтому там, "
+            "где REALITY по TCP еле дышит, держится. Обфускация Salamander "
+            "включается всегда — по ней QUIC и опознают."
+        ),
+        protocol=ProxyType.hysteria2,
+        network=NetworkType.udp,
+        security=SecurityType.tls,
+        default_port=443,
+        asks_masking_domain=True,
+        notes=[
+            "Слушает UDP, поэтому спокойно живёт на 443 рядом с REALITY",
+            "Отдельный процесс на ноде — обновите агента перед созданием",
+            "Сертификат самоподписанный: клиент принимает его по insecure",
         ],
     ),
     Preset(
@@ -282,6 +305,21 @@ def build_settings(
 ) -> Dict[str, Any]:
     """Собирает параметры inbound'а, генерируя всё, что можно сгенерировать."""
     settings: Dict[str, Any] = {}
+
+    if preset.protocol == ProxyType.hysteria2:
+        domain = (masking_domain or MASKING_DOMAINS[0]).strip()
+        settings.update(
+            {
+                "masquerade": f"https://{domain}/",
+                "sni": domain,
+                # Пароль обфускации общий для подключения: он перемешивает
+                # пакеты, а не разделяет людей.
+                "obfsPassword": hysteria.new_obfs_password(),
+                # Секрет для счётчиков — агент ходит с ним на localhost.
+                "statsSecret": secrets.token_urlsafe(24),
+            }
+        )
+        return settings
 
     if preset.security == SecurityType.reality:
         domain = (masking_domain or MASKING_DOMAINS[0]).strip()

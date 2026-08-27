@@ -1,6 +1,6 @@
 """HTTP-клиент к агенту ноды."""
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import httpx
 
@@ -91,12 +91,19 @@ class NodeClient:
     async def health(self) -> Dict[str, Any]:
         return await self._request("GET", "/health")
 
-    async def apply_config(self, config: Dict[str, Any], config_hash: str) -> Dict[str, Any]:
+    async def apply_config(
+        self,
+        config: Dict[str, Any],
+        config_hash: str,
+        hysteria: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         # Заливка конфига перезапускает Xray, это заметно дольше health-check.
+        # Поле hysteria отправляем всегда: None значит «останови, если
+        # запущен», иначе выключённое подключение осталось бы работать.
         return await self._request(
             "POST",
             "/config",
-            json={"config": config, "hash": config_hash},
+            json={"config": config, "hash": config_hash, "hysteria": hysteria},
             timeout=max(self.timeout, 30),
         )
 

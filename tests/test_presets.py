@@ -114,6 +114,12 @@ def test_current_presets_are_reality_or_cdn_or_ss2022():
     """Ни один «актуальный» шаблон не должен быть тем, что уже ловят."""
     for preset in preset_service.CURRENT_PRESETS:
         assert preset.protocol != ProxyType.vmess
+        if preset.protocol == ProxyType.hysteria2:
+            # У Hysteria2 TLS живёт внутри QUIC, а ловят по рукопожатию
+            # обычного TLS поверх TCP — это разные вещи. От опознания по
+            # QUIC его закрывает обфускация, она в шаблоне обязательна.
+            assert preset.network == NetworkType.udp
+            continue
         assert preset.security != SecurityType.tls
         if preset.protocol == ProxyType.shadowsocks:
             assert preset.key.endswith("_2022")

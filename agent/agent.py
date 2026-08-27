@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import threading
+import urllib.request
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -35,7 +36,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 
 # Версия агента. Увеличивается при каждом изменении этого файла: панель
 # сравнивает её со своей и показывает, на каких нодах агент устарел.
-AGENT_VERSION = 3
+AGENT_VERSION = 4
 
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")
 AGENT_HOST = os.getenv("AGENT_HOST", "0.0.0.0")
@@ -49,15 +50,32 @@ ACCESS_LOG = Path(os.getenv("XRAY_ACCESS_LOG", "/usr/local/etc/xray/access.log")
 ACCESS_TAIL_BYTES = int(os.getenv("XRAY_ACCESS_TAIL", str(2 * 1024 * 1024)))
 # Куда складывать вывод ядра, чтобы при падении было что показать панели.
 STDOUT_LOG = Path(os.getenv("XRAY_STDOUT_LOG", "/usr/local/etc/xray/xray-stdout.log"))
+# Hysteria2 — отдельный процесс рядом с Xray: QUIC, свой конфиг, свои
+# счётчики. Его может не быть на ноде вовсе — тогда агент просто не станет
+# его запускать, а панель увидит это в ошибке при заливке конфига.
+HYSTERIA_BIN = os.getenv("HYSTERIA_BIN", "/usr/local/bin/hysteria")
+HYSTERIA_CONFIG = Path(
+    os.getenv("HYSTERIA_CONFIG", "/usr/local/etc/xray/hysteria.json")
+)
+HYSTERIA_STDOUT_LOG = Path(
+    os.getenv("HYSTERIA_STDOUT_LOG", "/usr/local/etc/xray/hysteria-stdout.log")
+)
+HYSTERIA_CERT = Path(os.getenv("HYSTERIA_CERT", "/usr/local/etc/xray/hysteria.crt"))
+HYSTERIA_KEY = Path(os.getenv("HYSTERIA_KEY", "/usr/local/etc/xray/hysteria.key"))
+
 SSL_CERTFILE = os.getenv("SSL_CERTFILE", "")
 SSL_KEYFILE = os.getenv("SSL_KEYFILE", "")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     xray.start()
+    # Конфиг Hysteria2 мог остаться с прошлого запуска — поднимаем и её,
+    # иначе после перезагрузки сервера протокол молча пропал бы.
+    hysteria.start()
     try:
         yield
     finally:
+        hysteria.stop()
         xray.stop()
 
 
@@ -222,6 +240,190 @@ class XrayProcess:
 xray = XrayProcess()
 
 
+class HysteriaProcess:
+    """Супервизор Hysteria2. Устроен проще Xray: конфиг проверяем запуском.
+
+    Отдельный процесс нужен потому, что Hysteria2 — не транспорт Xray, а своё
+    ядро: QUIC, свой формат конфига и своя статистика по пользователям.
+    """
+
+    def __init__(self) -> None:
+        self.process: Optional[subprocess.Popen] = None
+        self.last_error: str = ""
+        self.stats_url: str = ""
+        self.stats_secret: str = ""
+        self._log_handle = None
+
+    @property
+    def available(self) -> bool:
+        return Path(HYSTERIA_BIN).exists()
+
+    @property
+    def running(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
+    def version(self) -> str:
+        if not self.available:
+            return ""
+        try:
+            output = subprocess.run(
+                [HYSTERIA_BIN, "version"], capture_output=True, text=True, timeout=10
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        match = re.search(r"Version:\s*(\S+)", output)
+        return match.group(1) if match else ""
+
+    def output_tail(self, limit: int = 1200) -> str:
+        if not HYSTERIA_STDOUT_LOG.exists():
+            return ""
+        try:
+            return _meaningful_output(
+                HYSTERIA_STDOUT_LOG.read_text("utf-8", errors="replace"), limit
+            )
+        except OSError:
+            return ""
+
+    def stop(self) -> None:
+        if self.process is not None and self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
+        self.process = None
+        if self._log_handle is not None:
+            self._log_handle.close()
+            self._log_handle = None
+
+    def start(self) -> None:
+        if self.running or not HYSTERIA_CONFIG.exists():
+            return
+        if not self.available:
+            self.last_error = (
+                f"нет бинарника {HYSTERIA_BIN} — обновите агента командой "
+                "установки из панели, она его доставит"
+            )
+            return
+        try:
+            HYSTERIA_STDOUT_LOG.parent.mkdir(parents=True, exist_ok=True)
+            self._log_handle = open(HYSTERIA_STDOUT_LOG, "wb")
+        except OSError:
+            self._log_handle = None
+        try:
+            self.process = subprocess.Popen(
+                [HYSTERIA_BIN, "server", "-c", str(HYSTERIA_CONFIG)],
+                stdout=self._log_handle or subprocess.DEVNULL,
+                stderr=subprocess.STDOUT if self._log_handle else subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            self.last_error = f"не удалось запустить hysteria: {exc}"
+            self.process = None
+            return
+
+        # Даём процессу мгновение упасть на битом конфиге: панели нужна
+        # причина, а не «всё хорошо» с мёртвым сервером.
+        time.sleep(1.5)
+        self.last_error = "" if self.running else (
+            self.output_tail() or "hysteria завершился сразу после запуска"
+        )
+
+    def restart(self) -> None:
+        self.stop()
+        self.start()
+
+    def ensure_certificate(self, common_name: str) -> str:
+        """Самоподписанный сертификат для QUIC.
+
+        Своего домена у ноды обычно нет, а без сертификата Hysteria2 не
+        поднимется вовсе. Клиент такой сертификат принимает по insecure —
+        ссылку с этим флагом панель выдаёт сама.
+        """
+        if HYSTERIA_CERT.exists() and HYSTERIA_KEY.exists():
+            return ""
+        HYSTERIA_CERT.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            result = subprocess.run(
+                [
+                    "openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256",
+                    "-days", "3650", "-nodes",
+                    "-keyout", str(HYSTERIA_KEY), "-out", str(HYSTERIA_CERT),
+                    "-subj", f"/CN={common_name}",
+                ],
+                capture_output=True, text=True, timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"не выпустить сертификат для hysteria: {exc}"
+        if result.returncode != 0:
+            return f"openssl не смог выпустить сертификат: {result.stderr.strip()[:200]}"
+        return ""
+
+    def traffic(self, reset: bool = True) -> Dict[str, Dict[str, int]]:
+        """Счётчики по пользователям с обнулением — как у Xray.
+
+        В ответе Hysteria2 tx — то, что пользователь отправил, rx — что
+        получил (проверено замером: скачивание даёт больший rx).
+        """
+        if not (self.running and self.stats_url):
+            return {}
+        try:
+            request = urllib.request.Request(
+                f"{self.stats_url}/traffic" + ("?clear=1" if reset else ""),
+                headers={"Authorization": self.stats_secret},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                data = json.loads(response.read().decode("utf-8") or "{}")
+        except Exception:
+            # Статистика — не повод ронять весь ответ агента: Xray-счётчики
+            # панель всё равно получит.
+            return {}
+        return {
+            name: {
+                "uplink": int(item.get("tx", 0) or 0),
+                "downlink": int(item.get("rx", 0) or 0),
+            }
+            for name, item in data.items()
+            if isinstance(item, dict)
+        }
+
+
+hysteria = HysteriaProcess()
+
+
+def apply_hysteria(config: Optional[Dict[str, Any]]) -> None:
+    """Записать конфиг Hysteria2 и перезапустить его.
+
+    None значит «на этой ноде его быть не должно» — тогда процесс глушим,
+    иначе выключённое в панели подключение продолжало бы работать.
+    """
+    if not config:
+        hysteria.stop()
+        HYSTERIA_CONFIG.unlink(missing_ok=True)
+        hysteria.stats_url = ""
+        return
+
+    config = dict(config)
+    common_name = config.pop("selfSignedFor", "")
+    if common_name:
+        problem = hysteria.ensure_certificate(str(common_name))
+        if problem:
+            raise HTTPException(400, problem)
+        config["tls"] = {"cert": str(HYSTERIA_CERT), "key": str(HYSTERIA_KEY)}
+
+    stats = config.get("trafficStats") or {}
+    hysteria.stats_url = f"http://{stats.get('listen', '')}" if stats.get("listen") else ""
+    hysteria.stats_secret = str(stats.get("secret") or "")
+
+    HYSTERIA_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    HYSTERIA_CONFIG.write_text(
+        json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    hysteria.restart()
+    if not hysteria.running:
+        raise HTTPException(400, f"Hysteria2 не запустилась: {hysteria.last_error}")
+
+
 def _read_cpu_times() -> tuple[int, int]:
     with open("/proc/stat", "r", encoding="utf-8") as handle:
         parts = [int(value) for value in handle.readline().split()[1:]]
@@ -276,6 +478,12 @@ def health() -> Dict[str, Any]:
         "mem_percent": mem_percent(),
         "uptime": system_uptime(),
         "xray_uptime": int(time.time() - xray.started_at) if xray.started_at else 0,
+        # Панель по этим полям понимает, есть ли на ноде Hysteria2 и жива ли
+        # она: без бинарника подключение просто не поднимется.
+        "hysteria_available": hysteria.available,
+        "hysteria_running": hysteria.running,
+        "hysteria_version": hysteria.version(),
+        "hysteria_error": hysteria.last_error,
     }
 
 
@@ -338,11 +546,17 @@ def apply_config(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     # Конфиг принят — держать копию отвергнутого незачем.
     rejected.unlink(missing_ok=True)
 
+    # Hysteria2 применяем после Xray: если её конфиг забракован, Xray уже
+    # работает на новом и об этом честно скажет исключение.
+    apply_hysteria(payload.get("hysteria"))
+
     xray.config_hash = str(payload.get("hash") or "")
     return {
         "ok": True,
         "xray_running": xray.running,
         "xray_version": xray.version(),
+        "hysteria_running": hysteria.running,
+        "hysteria_version": hysteria.version(),
         "config_hash": xray.config_hash,
     }
 
@@ -506,6 +720,15 @@ def stats(reset: bool = Query(default=True)) -> Dict[str, Any]:
                     total_up += value
                 else:
                     total_down += value
+
+    # Счётчики Hysteria2 приходят отдельно — складываем их с Xray, чтобы
+    # панель видела один трафик пользователя, а не два по половинке.
+    for username, counters in hysteria.traffic(reset).items():
+        into = users.setdefault(username, {"uplink": 0, "downlink": 0})
+        into["uplink"] += counters["uplink"]
+        into["downlink"] += counters["downlink"]
+        total_up += counters["uplink"]
+        total_down += counters["downlink"]
 
     return {
         "users": users,

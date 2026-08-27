@@ -30,7 +30,7 @@ def default_proxy_settings(protocol: ProxyType) -> Dict[str, Any]:
         if protocol == ProxyType.vless:
             settings["flow"] = ""
         return settings
-    if protocol == ProxyType.trojan:
+    if protocol in (ProxyType.trojan, ProxyType.hysteria2):
         return {"password": secrets.token_urlsafe(16)}
     return {
         "password": secrets.token_urlsafe(16),

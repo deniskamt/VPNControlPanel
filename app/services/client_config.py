@@ -85,6 +85,12 @@ def build_outbound(
     port = (host.port if host and host.port else None) or inbound.port
     opts = inbound.settings or {}
 
+    # Hysteria2 — не Xray: в профиль Xray-клиента его выразить нечем.
+    # Такие подключения человек получает ссылкой hysteria2:// из подписки,
+    # её понимают Happ, v2rayTun, Hiddify и остальные свежие приложения.
+    if inbound.protocol == ProxyType.hysteria2:
+        return None
+
     if inbound.protocol == ProxyType.shadowsocks:
         method = opts.get("method", shadowsocks.DEFAULT_METHOD)
         password = shadowsocks.client_password(method, opts.get("password"), creds)

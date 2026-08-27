@@ -181,6 +181,24 @@ def build_inbound(inbound: Inbound, users: Iterable[User]) -> Dict[str, Any]:
     return config
 
 
+def allowed_users_by_inbound(node: Node, users: Iterable[User]) -> Dict[int, List[User]]:
+    """Кому этот сервер сейчас положен — по каждому подключению.
+
+    Активные, не исчерпавшие ни общий лимит, ни лимит на этом сервере, и не
+    закрытые на нём вручную. Всё остальное — вопрос доступа, а не подписки:
+    ссылку пользователь видит, но ключа на сервере нет.
+    """
+    allowed: Dict[int, List[User]] = {}
+    for user in users:
+        if user.status != UserStatus.active or user.expired or user.limited:
+            continue
+        if not user.allowed_on(node.id):
+            continue
+        for inbound in user.inbounds:
+            allowed.setdefault(inbound.id, []).append(user)
+    return allowed
+
+
 def build_node_config(node: Node, users: Iterable[User]) -> Dict[str, Any]:
     """Полный конфиг Xray для ноды: служебный api + все её inbound'ы.
 
@@ -189,18 +207,7 @@ def build_node_config(node: Node, users: Iterable[User]) -> Dict[str, Any]:
     на нём вручную. Всё остальное — вопрос доступа, а не подписки: ссылку
     пользователь видит, но ключа на сервере нет.
     """
-    active_users = [
-        user
-        for user in users
-        if user.status == UserStatus.active
-        and not user.expired
-        and not user.limited
-        and user.allowed_on(node.id)
-    ]
-    allowed_by_inbound: Dict[int, List[User]] = {}
-    for user in active_users:
-        for inbound in user.inbounds:
-            allowed_by_inbound.setdefault(inbound.id, []).append(user)
+    allowed_by_inbound = allowed_users_by_inbound(node, users)
 
     inbounds: List[Dict[str, Any]] = [
         {
@@ -213,6 +220,10 @@ def build_node_config(node: Node, users: Iterable[User]) -> Dict[str, Any]:
     ]
     for inbound in sorted(node.inbounds, key=lambda i: i.id):
         if not inbound.is_enabled:
+            continue
+        # Hysteria2 — не Xray: его конфиг собирается отдельно и уезжает на
+        # ноду своим полем (см. services/hysteria.py).
+        if inbound.protocol == ProxyType.hysteria2:
             continue
         inbounds.append(build_inbound(inbound, allowed_by_inbound.get(inbound.id, [])))
 

@@ -109,6 +109,27 @@ else
   mkdir -p /usr/local/share/xray /usr/local/etc/xray
 fi
 
+# Hysteria2 — второе ядро, для сетей с потерями. Ставим всегда: подключение
+# на нём может появиться в панели позже, а идти на сервер второй раз ради
+# одного бинарника не хочется. Не скачался — не беда, панель скажет об этом,
+# когда такое подключение действительно понадобится.
+case "$(uname -m)" in
+  x86_64|amd64)  HYSTERIA_ASSET="hysteria-linux-amd64" ;;
+  aarch64|arm64) HYSTERIA_ASSET="hysteria-linux-arm64" ;;
+  armv7l)        HYSTERIA_ASSET="hysteria-linux-armv7" ;;
+  *)             HYSTERIA_ASSET="" ;;
+esac
+if [[ -n "$HYSTERIA_ASSET" ]]; then
+  echo "==> Ставим Hysteria2 ($HYSTERIA_ASSET)"
+  HYSTERIA_URL="https://github.com/apernet/hysteria/releases/latest/download/${HYSTERIA_ASSET}"
+  if curl -fsSL "$HYSTERIA_URL" -o /tmp/hysteria.bin; then
+    install -m 755 /tmp/hysteria.bin /usr/local/bin/hysteria
+    rm -f /tmp/hysteria.bin
+  else
+    echo "   не скачался — подключения Hysteria2 работать не будут" >&2
+  fi
+fi
+
 echo "==> Ставим агента в $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 # Скачиваем рядом и только потом подменяем: если панель ответит 502 (например,

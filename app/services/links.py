@@ -15,7 +15,7 @@ from app.models.enums import NetworkType, ProxyType, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.models.user import User
-from app.services import shadowsocks, xhttp
+from app.services import hysteria, shadowsocks, xhttp
 from app.services.flags import country_flag
 
 
@@ -181,6 +181,9 @@ def build_link(
     # от Marzban, где часть паролей хранилась не заполненной.
     if not secret_of(inbound.protocol, creds):
         return None
+
+    if inbound.protocol == ProxyType.hysteria2:
+        return hysteria.build_link(user, inbound, node, host, remark)
 
     if inbound.protocol == ProxyType.shadowsocks:
         method = opts.get("method", shadowsocks.DEFAULT_METHOD)

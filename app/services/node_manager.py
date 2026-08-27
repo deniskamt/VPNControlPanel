@@ -25,7 +25,12 @@ from app.services import notifier
 from app.services.audit import log_action
 from app.services.node_client import NodeClient, NodeError
 from app.services.xray_errors import explain
-from app.services.xray_config import build_node_config, config_hash
+from app.services import hysteria
+from app.services.xray_config import (
+    allowed_users_by_inbound,
+    build_node_config,
+    config_hash,
+)
 
 
 async def load_users(session: AsyncSession) -> List[User]:
@@ -87,13 +92,19 @@ async def sync_node(
         users = await load_users(session)
 
     config = build_node_config(node, users)
-    new_hash = config_hash(config)
+    # Hysteria2 живёт отдельным процессом, поэтому уезжает своим полем. В
+    # отпечаток берём оба конфига: иначе правка одного только hysteria не
+    # доехала бы до ноды — отпечаток Xray-части не изменился бы.
+    hysteria_config = hysteria.build_config(
+        node, node.inbounds, allowed_users_by_inbound(node, users)
+    )
+    new_hash = config_hash({"xray": config, "hysteria": hysteria_config})
     if node.config_hash == new_hash and not force:
         return False
 
     client = NodeClient(node)
     try:
-        result = await client.apply_config(config, new_hash)
+        result = await client.apply_config(config, new_hash, hysteria_config)
     except NodeError as exc:
         await _set_status(session, node, NodeStatus.error, explain(str(exc)))
         await session.commit()
