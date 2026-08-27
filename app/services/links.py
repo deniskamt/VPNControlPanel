@@ -24,6 +24,14 @@ from app.services.flags import country_flag
 DEFAULT_REMARK = "{flag} {node}"
 
 
+def secret_of(protocol: ProxyType, creds: Optional[Dict[str, Any]]) -> str:
+    """Ключ пользователя для протокола: uuid или пароль."""
+    settings = creds or {}
+    if protocol in (ProxyType.vless, ProxyType.vmess):
+        return str(settings.get("id") or "")
+    return str(settings.get("password") or "")
+
+
 def _remark(template: str, node: Node, user: User, inbound: Inbound) -> str:
     result = (
         (template or DEFAULT_REMARK)
@@ -157,6 +165,12 @@ def build_link(
     port = (host.port if host and host.port else None) or inbound.port
     remark = _remark(host.remark if host else DEFAULT_REMARK, node, user, inbound)
     opts = inbound.settings or {}
+
+    # Пустой ключ — не ссылка, а её видимость: клиент возьмёт такую строку
+    # и покажет «empty password» вместо подключения. Пустые ключи достаются
+    # от Marzban, где часть паролей хранилась не заполненной.
+    if not secret_of(inbound.protocol, creds):
+        return None
 
     if inbound.protocol == ProxyType.shadowsocks:
         method = opts.get("method", shadowsocks.DEFAULT_METHOD)

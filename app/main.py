@@ -20,6 +20,7 @@ from app.core.schema import ensure_columns
 from app.core.security import hash_password
 from app.models.admin import Admin
 from app.models.base import Base
+from app.services import users as user_service
 from app.services.worker import start_workers, stop_workers
 from app.web import auth, dashboard, inbounds, logs, nodes, subscription, users
 
@@ -48,6 +49,14 @@ async def _prepare_database() -> None:
             logger.warning(
                 f"Создан администратор «{settings.ADMIN_USERNAME}». "
                 "Смените пароль (ADMIN_PASSWORD) после первого входа."
+            )
+
+        repaired = await user_service.repair_credentials(session)
+        if repaired:
+            logger.warning(
+                f"Дозаполнены пустые ключи у {repaired} пользователей — "
+                "такие приезжают из Marzban, и клиент на них отвечал "
+                "«empty password»"
             )
 
 

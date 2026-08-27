@@ -102,3 +102,57 @@ def test_link_appears_once_credentials_exist():
     links = build_user_links(fake, [make_node([trojan])])
     assert len(links) == 1
     assert links[0].startswith(f"trojan://{password}@")
+
+
+def test_empty_key_does_not_become_a_broken_link():
+    """Пустой пароль приезжает из Marzban, а клиент на такой ссылке пишет
+    «empty password». Лучше не выдавать её вовсе."""
+    trojan = make_inbound(1, ProxyType.trojan)
+    user = SimpleNamespace(
+        username="u", status=UserStatus.active, expired=False, limited=False,
+        inbounds=[trojan],
+        proxy_settings=lambda p: {"password": ""},
+        allowed_on=lambda node_id: True,
+    )
+
+    assert build_user_links(user, [make_node([trojan])]) == []
+
+
+def test_ensure_credentials_fills_an_empty_key():
+    trojan = make_inbound(1, ProxyType.trojan)
+    proxy = UserProxy(protocol=ProxyType.trojan, settings={"password": ""})
+    user = User(username="u")
+    user.proxies.append(proxy)
+    user.inbounds = [trojan]
+
+    issued = user_service.ensure_credentials(user)
+
+    assert issued == [ProxyType.trojan]
+    assert proxy.settings["password"]
+
+
+def test_ensure_credentials_keeps_chosen_shadowsocks_method():
+    inbound = make_inbound(1, ProxyType.shadowsocks)
+    proxy = UserProxy(
+        protocol=ProxyType.shadowsocks,
+        settings={"password": "", "method": "aes-256-gcm"},
+    )
+    user = User(username="u")
+    user.proxies.append(proxy)
+    user.inbounds = [inbound]
+
+    user_service.ensure_credentials(user)
+
+    assert proxy.settings["password"]
+    assert proxy.settings["method"] == "aes-256-gcm"
+
+
+def test_ensure_credentials_does_not_touch_a_filled_key():
+    inbound = make_inbound(1, ProxyType.vless)
+    proxy = UserProxy(protocol=ProxyType.vless, settings={"id": "uuid-1", "flow": ""})
+    user = User(username="u")
+    user.proxies.append(proxy)
+    user.inbounds = [inbound]
+
+    assert user_service.ensure_credentials(user) == []
+    assert proxy.settings["id"] == "uuid-1"

@@ -17,7 +17,7 @@ from app.models.inbound import Inbound
 from app.models.node import Node
 from app.models.user import User, UserProxy
 from app.services.client_config import build_user_profiles
-from app.services.links import build_user_links
+from app.services.links import build_user_links, secret_of
 from app.services.subscription import create_subscription_token
 
 SS_METHODS = ("chacha20-ietf-poly1305", "aes-256-gcm", "aes-128-gcm")
@@ -208,7 +208,46 @@ def ensure_credentials(user: User) -> List[ProxyType]:
             UserProxy(protocol=protocol, settings=default_proxy_settings(protocol))
         )
         issued.append(protocol)
+
+    # Ключ может быть на месте, но пустой — так приезжает часть учётных
+    # записей из Marzban, где пароль хранился незаполненным. Ссылка из такого
+    # ключа собирается внешне правильная, а клиент показывает «empty
+    # password» и не подключается. Дозаполняем, не трогая остальное:
+    # у shadowsocks рядом лежит выбранный администратором метод.
+    for proxy in user.proxies:
+        if proxy.protocol not in needed:
+            continue
+        if secret_of(proxy.protocol, proxy.settings):
+            continue
+        settings = dict(proxy.settings or {})
+        for key, value in default_proxy_settings(proxy.protocol).items():
+            if not settings.get(key):
+                settings[key] = value
+        proxy.settings = settings
+        issued.append(proxy.protocol)
+
     return issued
+
+
+async def repair_credentials(session: AsyncSession) -> int:
+    """Дозаполнить пустые ключи у всех пользователей.
+
+    Часть учётных записей приезжает из Marzban с незаполненным паролем.
+    Подписка у такого человека собирается, но клиент на этой строке пишет
+    «empty password» — и понять причину, глядя в панель, невозможно: ключ
+    вроде бы есть. Проходим по всем один раз при запуске; тем, у кого всё
+    в порядке, это ничего не стоит.
+    """
+    result = await session.execute(select(User))
+    repaired = 0
+
+    for user in result.scalars().all():
+        if ensure_credentials(user):
+            repaired += 1
+
+    if repaired:
+        await session.commit()
+    return repaired
 
 
 async def grant_inbound_to_all(session: AsyncSession, inbound: Inbound) -> int:
