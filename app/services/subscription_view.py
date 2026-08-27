@@ -132,3 +132,31 @@ def hidden_entries(user: User, nodes: List[Node]) -> List[dict]:
                 )
 
     return reasons
+
+
+def move_node(nodes: List[Node], node_id: int, up: bool) -> bool:
+    """Передвинуть сервер на строку выше или ниже в подписке.
+
+    Приложение показывает конфигурации в том порядке, в каком они пришли,
+    поэтому порядок серверов — это первое, что видит человек в списке.
+
+    Нумерацию раздаём заново всему списку: по умолчанию у всех серверов
+    sort_order равен нулю, и обмен двух одинаковых значений ничего бы не
+    изменил. Возвращает False, если двигать некуда.
+    """
+    ordered = sorted(nodes, key=lambda item: (item.sort_order, item.id))
+    index = next(
+        (position for position, node in enumerate(ordered) if node.id == node_id), None
+    )
+    if index is None:
+        return False
+
+    target = index - 1 if up else index + 1
+    moved = 0 <= target < len(ordered)
+    if moved:
+        ordered[index], ordered[target] = ordered[target], ordered[index]
+
+    for position, node in enumerate(ordered):
+        node.sort_order = position
+
+    return moved

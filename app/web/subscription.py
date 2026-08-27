@@ -244,6 +244,37 @@ async def delete_host(
     return _redirect(int(user_id) if user_id.strip().isdigit() else None)
 
 
+@router.post("/nodes/{node_id}/move")
+async def move_node(
+    node_id: int,
+    direction: str = Form(...),
+    user_id: str = Form(default=""),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Поднять или опустить сервер в подписке.
+
+    Порядок общий для всех пользователей: подписка у всех собирается одним
+    и тем же перебором, просто с разным набором доступных серверов.
+    """
+    node = await session.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сервер не найден")
+
+    nodes = list((await session.execute(select(Node))).scalars().all())
+    if subscription_view.move_node(nodes, node_id, up=direction == "up"):
+        await log_action(
+            session,
+            action="node.move",
+            actor=admin.username,
+            target=node.name,
+            target_type="node",
+            message="выше в подписке" if direction == "up" else "ниже в подписке",
+        )
+    await session.commit()
+    return _redirect(int(user_id) if user_id.strip().isdigit() else None)
+
+
 @router.post("/inbounds/{inbound_id}/toggle")
 async def toggle_inbound(
     inbound_id: int,

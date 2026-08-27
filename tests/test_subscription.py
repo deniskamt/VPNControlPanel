@@ -10,6 +10,7 @@ from hashlib import sha256
 import pytest
 
 from app.core.config import settings
+from app.services import subscription_view
 from app.services.subscription import (
     create_subscription_token,
     get_subscription_payload,
@@ -78,3 +79,47 @@ def test_foreign_token_rejected():
 def test_garbage_rejected():
     for token in ("", "short", "!" * 40, "a" * 14):
         assert get_subscription_payload(token) is None
+
+
+class _FakeNode:
+    """Порядок считается по полям, а не по базе — этого достаточно."""
+
+    def __init__(self, node_id: int, sort_order: int = 0) -> None:
+        self.id = node_id
+        self.sort_order = sort_order
+
+
+def _order(nodes):
+    return [node.id for node in sorted(nodes, key=lambda n: (n.sort_order, n.id))]
+
+
+def test_move_node_up_when_order_not_set():
+    # По умолчанию у всех серверов sort_order = 0: обмен значениями ничего бы
+    # не дал, поэтому нумерация раздаётся заново.
+    nodes = [_FakeNode(1), _FakeNode(2), _FakeNode(3)]
+
+    assert subscription_view.move_node(nodes, 3, up=True) is True
+    assert _order(nodes) == [1, 3, 2]
+
+
+def test_move_node_down():
+    nodes = [_FakeNode(1), _FakeNode(2), _FakeNode(3)]
+
+    assert subscription_view.move_node(nodes, 1, up=False) is True
+    assert _order(nodes) == [2, 1, 3]
+
+
+def test_move_node_at_the_edge_does_nothing():
+    nodes = [_FakeNode(1), _FakeNode(2)]
+
+    assert subscription_view.move_node(nodes, 1, up=True) is False
+    assert _order(nodes) == [1, 2]
+
+
+def test_move_unknown_node_is_ignored():
+    nodes = [_FakeNode(1, sort_order=5), _FakeNode(2, sort_order=7)]
+
+    assert subscription_view.move_node(nodes, 99, up=True) is False
+    # Чужой запрос не должен перетасовывать список.
+    assert _order(nodes) == [1, 2]
+    assert [node.sort_order for node in nodes] == [5, 7]
