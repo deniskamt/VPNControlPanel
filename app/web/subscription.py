@@ -307,6 +307,120 @@ async def move_row(
     return _redirect(preview)
 
 
+@router.post("/nodes/{node_id}/inbounds/{inbound_id}/detach")
+async def detach_inbound(
+    node_id: int,
+    inbound_id: int,
+    user_id: str = Form(default=""),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Убрать подключение с одного сервера.
+
+    Ничего не удаляется: само подключение, его параметры и настройки строк
+    остаются на месте, меняется только список серверов, где оно поднимается.
+    Вернуть обратно — галочкой в таблице «Какие протоколы на каких серверах».
+    """
+    node = await session.get(Node, node_id)
+    inbound = await session.get(Inbound, inbound_id)
+    if node is None or inbound is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сервер или подключение не найдены")
+
+    node.inbounds = [item for item in node.inbounds if item.id != inbound_id]
+    await log_action(
+        session,
+        action="node.inbounds",
+        actor=admin.username,
+        target=node.name,
+        target_type="node",
+        message=f"«{inbound.tag}» убрано с сервера",
+        commit=True,
+    )
+    trigger_sync()
+    return _redirect(int(user_id) if user_id.strip().isdigit() else None)
+
+
+def _numbers(values: List[str]) -> set:
+    """Числа из полей формы — всё остальное молча отбрасываем."""
+    return {int(value) for value in values if value.strip().isdigit()}
+
+
+@router.post("/nodes/inbounds")
+async def save_node_inbounds(
+    pair: List[str] = Form(default=[]),
+    node: List[str] = Form(default=[]),
+    column: List[str] = Form(default=[]),
+    user_id: str = Form(default=""),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Сохранить таблицу «какой протокол на каком сервере».
+
+    Браузер присылает только отмеченные клетки, поэтому снятую галочку иначе
+    не отличить от строки, которой на странице не было. Вместе с клетками
+    форма присылает и свои строки со столбцами — за их пределами ничего не
+    трогаем: сервер или подключение, добавленные после открытия страницы, не
+    должны пропасть от чужого сохранения.
+
+    Меняются только связи. Ни подключения, ни их параметры, ни настройки
+    строк, ни ключи пользователей отсюда не удаляются.
+    """
+    checked = set()
+    for item in pair:
+        left, _, right = item.partition(":")
+        if left.strip().isdigit() and right.strip().isdigit():
+            checked.add((int(left), int(right)))
+
+    shown_nodes = _numbers(node)
+    shown_inbounds = _numbers(column)
+
+    nodes = list(
+        (await session.execute(select(Node).where(Node.id.in_(shown_nodes))))
+        .scalars()
+        .all()
+    )
+    inbounds = {
+        item.id: item
+        for item in (
+            await session.execute(select(Inbound).where(Inbound.id.in_(shown_inbounds)))
+        )
+        .scalars()
+        .all()
+    }
+
+    changes: List[str] = []
+    for item in nodes:
+        was = {inbound.id for inbound in item.inbounds}
+        # За пределами показанных столбцов оставляем всё как было.
+        now = (was - set(inbounds)) | {
+            inbound_id
+            for node_id, inbound_id in checked
+            if node_id == item.id and inbound_id in inbounds
+        }
+        if was == now:
+            continue
+        by_id = {inbound.id: inbound for inbound in item.inbounds} | inbounds
+        item.inbounds = [by_id[inbound_id] for inbound_id in sorted(now)]
+        for inbound_id in sorted(was - now):
+            changes.append(f"{item.name}: убрано «{by_id[inbound_id].tag}»")
+        for inbound_id in sorted(now - was):
+            changes.append(f"{item.name}: добавлено «{by_id[inbound_id].tag}»")
+
+    if changes:
+        await log_action(
+            session,
+            action="node.inbounds",
+            actor=admin.username,
+            target="серверы",
+            target_type="node",
+            message="; ".join(changes),
+        )
+    await session.commit()
+    if changes:
+        trigger_sync()
+    return _redirect(int(user_id) if user_id.strip().isdigit() else None)
+
+
 @router.post("/inbounds/{inbound_id}/toggle")
 async def toggle_inbound(
     inbound_id: int,

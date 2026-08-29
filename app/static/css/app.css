@@ -206,7 +206,39 @@ td > .actions { flex-wrap: nowrap; justify-content: flex-end; }
    тем же приёмом, что и формы установки и правки. Всплывающий список
    внутри ячейки распирал строку и обрезался прокруткой таблицы. */
 .row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Раскрытая строка с формой не должна расширять таблицу. Внутри неё сетка
+   в несколько колонок, и по её «естественной» ширине браузер растягивал всю
+   таблицу до двух тысяч пикселей: сама таблица прокручивалась, а форма
+   оказывалась за правым краем экрана. max-width: 0 у ячейки означает
+   «занимай ровно то, что дала таблица» — сетка тогда переносит поля внутри
+   видимой ширины.
+   Ширину и перенос задаём тут же: правило для колонки кнопок выше срабатывает
+   и на раскрытой строке, если в ней есть свой блок с кнопками, — и тогда вся
+   форма прижимается вправо одной длинной строкой. */
+.row-detail > td { max-width: 0; width: auto; white-space: normal; text-align: left; }
+
+/* Таблица «протокол × сервер»: галочка сама по себе — цель 18 px, попасть
+   в неё тяжело, поэтому кликается вся клетка. */
+.matrix td.pick { text-align: center; padding: 4px; }
+.matrix td.pick label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Ширину задаём сами: иначе при одном подключении клетка растягивается
+     на всю строку и подсветка выглядит полосой во весь стол. */
+  width: 44px;
+  margin: 0 auto;
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color var(--dur-ui) ease;
 }
+@media (hover: hover) and (pointer: fine) {
+  .matrix td.pick label:hover { background: rgba(255, 255, 255, 0.05); }
+}
+.matrix td.pick label:has(input:checked) { background: var(--accent-soft); }
+
 form.inline { display: inline; }
 
 /* --- Прогресс трафика --- */

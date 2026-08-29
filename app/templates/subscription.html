@@ -77,7 +77,10 @@
     <h1>Подписка</h1>
     <div class="sub">Что пользователь увидит в приложении — и как это настроить</div>
   </div>
-  <a class="btn" href="/settings">Оформление подписки</a>
+  <div class="actions">
+    <a class="btn" href="#node-protocols">Протоколы на серверах</a>
+    <a class="btn" href="/settings">Оформление подписки</a>
+  </div>
 </div>
 
 <div class="panel">
@@ -180,16 +183,11 @@
                     data-confirm="Удалить настройку «{{ entry.host.remark }}»? Строка вернётся к виду по умолчанию.">
                 <button class="small danger" type="submit">Сбросить</button>
               </form>
-            {% else %}
-              <form class="inline" method="post" action="/subscription/inbounds/{{ entry.inbound.id }}/toggle"
-                    data-confirm="Выключить «{{ entry.inbound.tag }}»? Оно исчезнет из подписки у всех пользователей.">
-                <button class="small" type="submit">Выключить у всех</button>
-              </form>
             {% endif %}
           </div>
         </td>
       </tr>
-      <tr id="entry-{{ entry.key }}" hidden>
+      <tr class="row-detail" id="entry-{{ entry.key }}" hidden>
         <td colspan="5">
           {% if entry.host %}
             <form method="post" action="/subscription/hosts/{{ entry.host.id }}/update">
@@ -220,6 +218,26 @@
               <button class="small" data-copy="#link-{{ entry.key }}">Копировать ссылку</button>
             </div>
           {% endif %}
+          {# Убрать протокол — здесь, а не в строке: в строке такую кнопку
+             слишком легко нажать по ошибке, а места там уже нет. Ничего не
+             удаляется, поэтому и написано, как вернуть. #}
+          <div class="actions" style="margin-top:12px; flex-wrap:wrap">
+            <span class="muted">
+              «{{ entry.inbound.tag }}» поднято на {{ entry.inbound.nodes | length }} серв.
+            </span>
+            <form class="inline" method="post"
+                  action="/subscription/nodes/{{ entry.node.id }}/inbounds/{{ entry.inbound.id }}/detach"
+                  data-confirm="Убрать «{{ entry.inbound.tag }}» с сервера {{ entry.node.name }}? Ничего не удалится: вернуть можно галочкой в таблице «Протоколы на серверах».">
+              <input type="hidden" name="user_id" value="{{ user.id }}">
+              <button class="small" type="submit">Убрать с этого сервера</button>
+            </form>
+            <form class="inline" method="post" action="/subscription/inbounds/{{ entry.inbound.id }}/toggle"
+                  data-confirm="Выключить «{{ entry.inbound.tag }}»? Оно исчезнет из подписки у всех пользователей и на всех серверах. Настройки при этом сохранятся.">
+              <input type="hidden" name="user_id" value="{{ user.id }}">
+              <button class="small danger" type="submit">Выключить у всех</button>
+            </form>
+            <a class="btn small" href="#node-protocols">Все протоколы на серверах</a>
+          </div>
         </td>
       </tr>
     {% endfor %}
@@ -258,6 +276,7 @@
 </div>
 {% endif %}
 
+
 <div class="panel">
   <header>Добавить настройку вручную</header>
   <div class="body">
@@ -292,5 +311,80 @@
     </form>
   </div>
 </div>
+
 {% endif %}
+
+<div class="panel" id="node-protocols">
+  <header>
+    Протоколы на серверах
+    <span class="muted" style="font-weight:400">какое подключение поднимается на каком сервере</span>
+  </header>
+  {% if not inbounds or not nodes %}
+    <div class="empty">
+      {% if not nodes %}Серверов ещё нет — добавьте их на странице <a href="/nodes">Серверы</a>.
+      {% else %}Подключений ещё нет — создайте их на странице <a href="/inbounds">Подключения</a>.{% endif %}
+    </div>
+  {% else %}
+  <div class="body">
+    <p class="muted" style="margin-top:0">
+      Снимите галочку — протокол перестанет подниматься на этом сервере и
+      пропадёт из подписки. Поставьте обратно — вернётся. Ничего при этом не
+      удаляется: ни само подключение, ни его параметры, ни настройки строк,
+      ни ключи пользователей.
+    </p>
+  </div>
+  <form method="post" action="/subscription/nodes/inbounds">
+    {# Таблица не зависит от пользователя — он нужен только чтобы вернуться
+       к тому же предпросмотру. #}
+    {% if user %}<input type="hidden" name="user_id" value="{{ user.id }}">{% endif %}
+    <div class="table-wrap">
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th>Сервер</th>
+            {% for inbound in inbounds %}
+              <th>
+                {# Столбцы и строки перечисляем явно: снятую галочку браузер не
+                   присылает, и без этого списка её не отличить от того, чего
+                   на странице вовсе не было. #}
+                <input type="hidden" name="column" value="{{ inbound.id }}">
+                {{ inbound.tag }}
+                <div class="muted sub-line">
+                  {{ inbound.protocol.value }}:{{ inbound.port }}{% if not inbound.is_enabled %} · выключено{% endif %}
+                </div>
+              </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+        {% for node in nodes %}
+          {% set on_node = node.inbounds | map(attribute='id') | list %}
+          <tr>
+            <td class="nowrap">
+              <input type="hidden" name="node" value="{{ node.id }}">
+              {{ node.name }}
+              <div class="muted sub-line">{{ node.address }}</div>
+            </td>
+            {% for inbound in inbounds %}
+              <td class="pick">
+                <label title="{{ inbound.tag }} на сервере {{ node.name }}">
+                  <input type="checkbox" name="pair" value="{{ node.id }}:{{ inbound.id }}"
+                         {% if inbound.id in on_node %}checked{% endif %}>
+                </label>
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="body">
+      <button type="submit" class="primary">Сохранить</button>
+      <span class="muted" style="margin-left:10px">
+        серверы получат новый конфиг сразу после сохранения
+      </span>
+    </div>
+  </form>
+  {% endif %}
+</div>
 {% endblock %}

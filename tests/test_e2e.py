@@ -803,3 +803,98 @@ def test_checkboxes_are_ours_not_the_system_ones(client, inbound):
     # Отклик на нажатие и своя стрелка у выпадающего списка.
     assert 'input[type="checkbox"]:active' in css
     assert "select::-ms-expand" in css
+
+
+def test_protocols_can_be_switched_per_node_without_deleting(client, auth, inbound):
+    """Поменять протоколы у сервера — не удаляя ни подключения, ни настроек.
+
+    Раньше из «Подписки» можно было только выключить подключение сразу у всех.
+    Убрать его с одного сервера — значит поменять список серверов, а не что-то
+    удалить: настройки строк и ключи пользователей остаются на месте.
+    """
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_matrix", "proxies": {"vless": {}},
+              "inbounds": {"vless": ["VLESS-REALITY"]}, "expire": 0},
+    )
+    # Своя настройка строки: она должна пережить и снятие, и возврат галочки.
+    client.post(
+        "/subscription/hosts/create",
+        data={"inbound_id": 1, "node_id": 1, "remark": "{flag} Проверка"},
+        follow_redirects=False,
+    )
+    hosts_before = client.get("/subscription").text.count("Проверка")
+
+    detached = client.post(
+        "/subscription/nodes/1/inbounds/1/detach", data={}, follow_redirects=False
+    )
+    assert detached.status_code == 303, detached.text
+
+    # Подключение осталось в панели — исчезло только с этого сервера.
+    assert "VLESS-REALITY" in client.get("/inbounds").text
+    links = client.get("/api/user/user_matrix", headers=auth).json()["links"]
+    assert not any("nl1.example.com" in link for link in links), links
+
+    returned = client.post(
+        "/subscription/nodes/inbounds",
+        data={"pair": ["1:1"], "node": ["1"], "column": ["1"]},
+        follow_redirects=False,
+    )
+    assert returned.status_code == 303, returned.text
+
+    links = client.get("/api/user/user_matrix", headers=auth).json()["links"]
+    assert any("nl1.example.com" in link for link in links), links
+    # Настройка строки никуда не делась.
+    assert client.get("/subscription").text.count("Проверка") == hosts_before
+
+
+def test_protocol_matrix_shows_every_pair(client, inbound):
+    """Таблица «протокол × сервер» — одно место, где это видно целиком."""
+    page = client.get("/subscription").text
+
+    assert "Протоколы на серверах" in page
+    assert 'name="pair" value="1:1"' in page
+    # Отмеченная клетка — подключение действительно поднято на сервере.
+    matrix = page.split('id="node-protocols"', 1)[1]
+    assert 'value="1:1"' in matrix and "checked" in matrix
+
+
+def test_open_form_does_not_stretch_the_table(client, inbound):
+    """Форма в раскрытой строке уезжала за правый край экрана."""
+    css = client.get("/static/css/app.css").text
+    page = client.get("/subscription").text
+
+    # Ячейка раскрытой строки берёт ширину у таблицы, а не наоборот.
+    assert ".row-detail > td" in css and "max-width: 0" in css
+    assert 'class="row-detail"' in page
+
+
+def test_matrix_leaves_alone_what_was_not_on_the_page(client, auth, inbound):
+    """Сохранение таблицы не должно задевать то, чего в ней не было.
+
+    Браузер присылает только отмеченные клетки: если считать, что пришло
+    всё, то сервер, добавленный после открытия страницы, лишится подключений
+    от чужого сохранения.
+    """
+    client.post(
+        "/nodes/create",
+        data={"name": "FI-later", "address": "fi.example.com", "agent_host": "127.0.0.1",
+              "agent_port": 9, "agent_token": "t", "country": "FI", "inbound_ids": [1]},
+        follow_redirects=False,
+    )
+    page = client.get("/subscription").text
+    later_id = re.search(r'name="node" value="(\d+)"[^>]*>\s*FI-later', page)
+    assert later_id, "нового сервера нет в таблице"
+
+    # Сохраняем таблицу так, будто на странице был только первый сервер.
+    saved = client.post(
+        "/subscription/nodes/inbounds",
+        data={"pair": ["1:1"], "node": ["1"], "column": ["1"]},
+        follow_redirects=False,
+    )
+    assert saved.status_code == 303
+
+    after = client.get("/subscription").text
+    row = after.split(f'name="node" value="{later_id.group(1)}"', 1)[1]
+    assert "checked" in row.split("</tr>", 1)[0], "чужой сервер потерял подключение"

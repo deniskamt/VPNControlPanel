@@ -163,7 +163,7 @@
           </div>
         </td>
       </tr>
-      <tr id="more-{{ node.id }}" hidden>
+      <tr class="row-detail" id="more-{{ node.id }}" hidden>
         <td colspan="6">
           <div class="row-actions">
             <button class="small" data-toggle="#install-{{ node.id }}">Установка</button>
@@ -194,7 +194,7 @@
         <td colspan="6" class="node-error">{{ node.message }}</td>
       </tr>
       {% endif %}
-      <tr id="install-{{ node.id }}" hidden>
+      <tr class="row-detail" id="install-{{ node.id }}" hidden>
         <td colspan="6">
           <p class="muted" style="margin-top:0">
             Выполните на сервере <b>{{ node.address }}</b> под root — токен уже подставлен:
@@ -241,7 +241,7 @@ python3 selftest_node.py</div>
           </p>
         </td>
       </tr>
-      <tr id="node-{{ node.id }}" hidden>
+      <tr class="row-detail" id="node-{{ node.id }}" hidden>
         <td colspan="6">{{ node_form('/nodes/' ~ node.id ~ '/update', node, 'Сохранить', country_options[node.id]) }}</td>
       </tr>
     {% endfor %}
