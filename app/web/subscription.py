@@ -389,6 +389,7 @@ async def save_node_inbounds(
     }
 
     changes: List[str] = []
+    removed = added = 0
     for item in nodes:
         was = {inbound.id for inbound in item.inbounds}
         # За пределами показанных столбцов оставляем всё как было.
@@ -403,17 +404,28 @@ async def save_node_inbounds(
         item.inbounds = [by_id[inbound_id] for inbound_id in sorted(now)]
         for inbound_id in sorted(was - now):
             changes.append(f"{item.name}: убрано «{by_id[inbound_id].tag}»")
+            removed += 1
         for inbound_id in sorted(now - was):
             changes.append(f"{item.name}: добавлено «{by_id[inbound_id].tag}»")
+            added += 1
 
     if changes:
+        # В сообщении — итог: на девяти серверах перечисление не влезало
+        # в колонку журнала, и сохранение падало пятисоткой. Подробности
+        # целиком уходят в details, там длина не ограничена.
+        summary = (
+            "; ".join(changes)
+            if len(changes) <= 3
+            else f"серверов: {len(nodes)}, убрано: {removed}, добавлено: {added}"
+        )
         await log_action(
             session,
             action="node.inbounds",
             actor=admin.username,
             target="серверы",
             target_type="node",
-            message="; ".join(changes),
+            message=summary,
+            details={"changes": changes},
         )
     await session.commit()
     if changes:

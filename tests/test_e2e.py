@@ -898,3 +898,48 @@ def test_matrix_leaves_alone_what_was_not_on_the_page(client, auth, inbound):
     after = client.get("/subscription").text
     row = after.split(f'name="node" value="{later_id.group(1)}"', 1)[1]
     assert "checked" in row.split("</tr>", 1)[0], "чужой сервер потерял подключение"
+
+
+def test_whole_matrix_saves_on_a_panel_of_nine_servers(client, auth, inbound):
+    """На боевом размере сохранение падало пятисоткой.
+
+    Не из-за галочек: перечисление всех изменений не влезало в колонку
+    журнала, Postgres отвечал «value too long», и пользователь видел
+    Internal Server Error вместо сохранённых настроек.
+    """
+    for number in range(1, 9):
+        client.post(
+            "/nodes/create",
+            data={"name": f"Сервер номер {number} — длинное название для журнала",
+                  "address": f"node{number}.example.com", "agent_host": "127.0.0.1",
+                  "agent_port": 9, "agent_token": f"t{number}", "country": "NL"},
+            follow_redirects=False,
+        )
+    client.post(
+        "/inbounds/quick",
+        data={"preset": "vless_reality_xhttp", "port": 8443,
+              "masking_domain": "www.samsung.com"},
+        follow_redirects=False,
+    )
+
+    page = client.get("/subscription").text
+    nodes = sorted(set(re.findall(r'name="node" value="(\d+)"', page)), key=int)
+    columns = sorted(set(re.findall(r'name="column" value="(\d+)"', page)), key=int)
+    assert len(nodes) >= 9 and len(columns) >= 2
+
+    pairs = [f"{node}:{column}" for node in nodes for column in columns]
+    off = client.post(
+        "/subscription/nodes/inbounds",
+        data={"pair": [], "node": nodes, "column": columns},
+        follow_redirects=False,
+    )
+    assert off.status_code == 303, off.text
+    on = client.post(
+        "/subscription/nodes/inbounds",
+        data={"pair": pairs, "node": nodes, "column": columns},
+        follow_redirects=False,
+    )
+    assert on.status_code == 303, on.text
+
+    # В журнале — итог, а не простыня, и он не оборван.
+    assert "убрано" in client.get("/logs").text
