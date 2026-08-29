@@ -67,3 +67,24 @@ def test_worker_serves_nodes_in_parallel():
     assert "PARALLEL_NODES" in source
     # Последовательного обхода в цикле опроса больше нет.
     assert "for node in nodes:" not in source
+
+
+def test_inbound_diagnostic_names_the_three_causes():
+    """Три разные беды выглядят одинаково — «не подключается»."""
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "diagnose_inbounds", Path("scripts/diagnose_inbounds.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # Порт, на котором заведомо никого нет.
+    assert module.check_tcp("127.0.0.1", 9) in ("закрыт", "таймаут")
+    # UDP молчит по своей природе, и скрипт об этом говорит прямо.
+    assert "UDP" in module.check_udp("127.0.0.1", 9)
+
+    text = Path("scripts/diagnose_inbounds.py").read_text("utf-8")
+    for cause in ("не раскатано", "конфиг не доехал", "файрвол"):
+        assert cause in text or cause.split()[0] in text
