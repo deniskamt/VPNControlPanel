@@ -34,7 +34,12 @@ from app.services.xray_config import (
 
 
 async def load_users(session: AsyncSession) -> List[User]:
-    result = await session.execute(select(User))
+    # Порядок обязателен. Без него Postgres отдаёт строки в физическом
+    # порядке, а он меняется при каждой записи трафика — и конфиг ноды
+    # получается каждый раз новый, хотя по сути тот же. Панель видит другой
+    # отпечаток, перезаливает конфиг, агент перезапускает Xray, и у людей
+    # рвётся соединение раз в NODE_POLL_INTERVAL секунд.
+    result = await session.execute(select(User).order_by(User.id))
     return list(result.scalars().all())
 
 

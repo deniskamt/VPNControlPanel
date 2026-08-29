@@ -160,8 +160,11 @@ def _inbound_settings(inbound: Inbound, clients: List[Dict[str, Any]]) -> Dict[s
 
 
 def build_inbound(inbound: Inbound, users: Iterable[User]) -> Dict[str, Any]:
+    # Сортировка не косметика: от порядка ключей зависит отпечаток конфига,
+    # а от него — будет ли панель перезаливать его на ноду. Перезаливка
+    # перезапускает Xray и рвёт все соединения.
     clients: List[Dict[str, Any]] = []
-    for user in users:
+    for user in sorted(users, key=lambda item: item.username):
         entry = _client_entry(inbound, user)
         if entry:
             clients.append(entry)

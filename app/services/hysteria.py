@@ -79,7 +79,9 @@ def build_config(
         options = inbound.settings or {}
         users = users_by_inbound.get(inbound.id, [])
         credentials = {}
-        for user in users:
+        # Порядок влияет на отпечаток конфига, а лишняя перезаливка
+        # перезапускает Hysteria2 и рвёт соединения.
+        for user in sorted(users, key=lambda item: item.username):
             settings = user.proxy_settings(ProxyType.hysteria2) or {}
             password = str(settings.get("password") or "")
             if password:

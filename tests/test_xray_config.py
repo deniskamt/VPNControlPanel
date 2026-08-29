@@ -332,3 +332,27 @@ def test_link_name_without_country_has_no_stray_spaces():
     link = build_link(make_user([inbound]), inbound, make_node([inbound], country=None))
 
     assert link.endswith("#NL-1")
+
+
+def test_config_hash_does_not_depend_on_user_order():
+    """Иначе у людей рвётся соединение раз в полминуты.
+
+    Postgres отдаёт строки в физическом порядке, а он меняется при каждой
+    записи трафика. Если от порядка зависит отпечаток конфига, панель
+    считает его новым, перезаливает на ноду, и агент перезапускает Xray —
+    ровно на интервале опроса.
+    """
+    from app.services.xray_config import build_node_config, config_hash
+
+    inbound = make_inbound()
+    node = make_node([inbound])
+    users = [
+        make_user([inbound], username=name, settings={"id": f"uuid-{name}"})
+        for name in ("b", "a", "c")
+    ]
+
+    прямой = config_hash(build_node_config(node, users))
+    обратный = config_hash(build_node_config(node, list(reversed(users))))
+    перемешанный = config_hash(build_node_config(node, [users[2], users[0], users[1]]))
+
+    assert прямой == обратный == перемешанный
