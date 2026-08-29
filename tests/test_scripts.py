@@ -88,3 +88,26 @@ def test_inbound_diagnostic_names_the_three_causes():
     text = Path("scripts/diagnose_inbounds.py").read_text("utf-8")
     for cause in ("не раскатано", "конфиг не доехал", "файрвол"):
         assert cause in text or cause.split()[0] in text
+
+
+def test_dest_scanner_checks_what_reality_needs():
+    """Домен из гайда часто не годится, и это выясняется только на живых
+    пользователях: нет TLS 1.3 или HTTP/2 — рукопожатие рассыпается."""
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "pick_dest", Path("scripts/pick_dest.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # Маску в сертификате понимаем так же, как её понимает TLS.
+    assert module.covers("www.example.com", ["*.example.com"])
+    assert module.covers("example.com", ["example.com"])
+    assert not module.covers("example.com", ["*.example.com"])
+    assert not module.covers("evil.com", ["*.example.com"])
+
+    # Несуществующий домен не должен ронять скрипт.
+    ok, note, _ = module.probe("this-domain-does-not-exist.invalid")
+    assert ok is False and note
