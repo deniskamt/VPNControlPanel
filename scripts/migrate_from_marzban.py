@@ -50,7 +50,6 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
 from app.services.keys import public_key_from_private  # noqa: E402
-from app.services.presets import MIN_CLIENT_VERSION  # noqa: E402
 from app.models import (  # noqa: E402
     Admin,
     Base,
@@ -143,8 +142,9 @@ def _inbound_from_xray(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # `xray x25519 -i` и вписывать руками для каждого подключения; теперь
         # он считается из приватного прямо здесь.
         options["publicKey"] = public_key_from_private(options["privateKey"])
-        # Свежие ядра иначе пускают только клиентов не старше себя.
-        options.setdefault("minClientVer", MIN_CLIENT_VERSION)
+        # minClientVer не переносим и не добавляем: он отсекает клиентов,
+        # которые не сообщают версию ядра, а без него проверки нет вовсе.
+        options.pop("minClientVer", None)
 
     clients = (raw.get("settings") or {}).get("clients") or []
     if clients:

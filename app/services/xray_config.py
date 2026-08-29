@@ -85,10 +85,12 @@ def _stream_settings(inbound: Inbound) -> Dict[str, Any]:
             "privateKey": opts.get("privateKey", ""),
             "shortIds": opts.get("shortIds") or [""],
         }
-        # Без этого поля свежее ядро пускает только клиентов не старше себя,
-        # и приложение с ядром постарше просто не соединяется.
-        if opts.get("minClientVer"):
-            stream["realitySettings"]["minClientVer"] = opts["minClientVer"]
+        # minClientVer намеренно не переносим, даже если он остался в
+        # настройках от прежних версий панели. Без него REALITY не проверяет
+        # версию вовсе, а с ним отсекает клиентов, которые её не сообщают, —
+        # это все реализации не на Xray. Отказ выглядит как «подключение
+        # есть, интернета нет», потому что сервер молча отдаёт таких клиентов
+        # маскировочному сайту.
         if opts.get("maxTimeDiff"):
             stream["realitySettings"]["maxTimeDiff"] = opts["maxTimeDiff"]
     else:

@@ -205,23 +205,30 @@ def test_vision_profile_keeps_flow_only_on_tcp():
     assert "flow" not in account
 
 
-def test_reality_settings_allow_older_client_cores():
-    """Иначе после обновления ядра на ноде приложения перестают подключаться.
+def test_reality_does_not_gate_clients_by_core_version():
+    """minClientVer отсекает клиентов, а не защищает от них.
 
-    Проверено на живых сборках: сервер 26.7.28 без minClientVer не пускает
-    клиента 25.6.8, а с ним пускает.
+    Проверка в исходниках REALITY:
+        config.MinClientVer == nil || Value(ClientVer) >= Value(MinClientVer)
+    Без поля проверки нет вовсе; с полем клиент обязан прислать версию ядра.
+    Реализации не на Xray шлют нули и получают маскировочный сайт вместо
+    прокси — снаружи это «подключение есть, интернета нет».
     """
     for key in ("vless_reality_xhttp", "vless_reality", "vless_reality_grpc"):
         settings = preset_service.build_settings(preset_service.PRESETS_BY_KEY[key])
-        assert settings["minClientVer"] == "1.8.0", key
+        assert "minClientVer" not in settings, key
 
-    inbound = make_inbound(
-        preset_service.build_settings(preset_service.PRESETS_BY_KEY["vless_reality_xhttp"])
+    # Поле могло остаться в настройках от прежних версий панели — на ноду
+    # оно всё равно не уезжает.
+    settings = preset_service.build_settings(
+        preset_service.PRESETS_BY_KEY["vless_reality_xhttp"]
     )
+    settings["minClientVer"] = "1.8.0"
+    inbound = make_inbound(settings)
     node = make_node([inbound])
     config = build_node_config(node, [make_user([inbound])])
     reality = config["inbounds"][1]["streamSettings"]["realitySettings"]
-    assert reality["minClientVer"] == "1.8.0"
+    assert "minClientVer" not in reality
 
 
 def test_obfuscation_is_not_enabled_by_default():
