@@ -7,6 +7,7 @@ from loguru import logger
 
 from app.core.config import settings
 from app.core.database import session_scope
+from app.models.node import Node
 from app.services.node_manager import (
     apply_traffic_resets,
     enforce_limits,
@@ -14,7 +15,6 @@ from app.services.node_manager import (
     load_users,
     poll_node,
     refresh_devices,
-    sync_all_nodes,
     sync_node,
 )
 
@@ -22,9 +22,46 @@ from app.services.node_manager import (
 _pending: set = set()
 
 
-async def _sync_now() -> None:
+# Сколько нод обслуживаем одновременно. Ноды независимы, а обход по очереди
+# означает, что одна недоступная задерживает все остальные: на каждую уходит
+# таймаут, и при десятке серверов круг растягивается на минуты. Именно из-за
+# этого только что созданное подключение подолгу не появлялось на живых нодах.
+PARALLEL_NODES = 16
+
+
+async def _serve_node(node_id: int, poll: bool) -> None:
+    """Опросить ноду и залить ей конфиг — в своей сессии.
+
+    Своя сессия обязательна: объекты SQLAlchemy привязаны к сессии, и делить
+    одну между параллельными задачами нельзя.
+    """
     async with session_scope() as session:
-        await sync_all_nodes(session)
+        node = await session.get(Node, node_id)
+        if node is None or not node.is_enabled:
+            return
+        if poll:
+            await poll_node(session, node)
+        await sync_node(session, node, users=await load_users(session))
+
+
+async def _serve_all(poll: bool) -> None:
+    async with session_scope() as session:
+        node_ids = [node.id for node in await load_nodes(session)]
+
+    limit = asyncio.Semaphore(PARALLEL_NODES)
+
+    async def one(node_id: int) -> None:
+        async with limit:
+            try:
+                await _serve_node(node_id, poll)
+            except Exception as exc:  # noqa: BLE001 - одна нода не роняет круг
+                logger.exception(f"Нода {node_id}: {exc}")
+
+    await asyncio.gather(*(one(node_id) for node_id in node_ids))
+
+
+async def _sync_now() -> None:
+    await _serve_all(poll=False)
 
 
 def trigger_sync() -> None:
@@ -45,15 +82,9 @@ def trigger_sync() -> None:
 async def _poll_loop() -> None:
     while True:
         try:
+            await _serve_all(poll=True)
             async with session_scope() as session:
-                nodes = await load_nodes(session)
-                users = None
-                for node in nodes:
-                    await poll_node(session, node)
-                    if users is None:
-                        users = await load_users(session)
-                    await sync_node(session, node, users=users)
-                await refresh_devices(session, nodes)
+                await refresh_devices(session, await load_nodes(session))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - воркер не должен умирать

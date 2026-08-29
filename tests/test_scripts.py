@@ -50,3 +50,20 @@ def test_restore_keeps_local_database_and_carries_secrets() -> None:
         assert line in text
     # Перед заменой базы делается снимок — без него откатываться будет нечем.
     assert "vpn-panel-before-restore" in text
+
+
+def test_worker_serves_nodes_in_parallel():
+    """Одна недоступная нода не должна задерживать остальные.
+
+    Обход по очереди означал таймаут на каждую мёртвую ноду: при десятке
+    серверов круг растягивался на минуты, и только что созданное
+    подключение подолгу не появлялось на живых.
+    """
+    from pathlib import Path
+
+    source = Path("app/services/worker.py").read_text("utf-8")
+
+    assert "asyncio.gather" in source
+    assert "PARALLEL_NODES" in source
+    # Последовательного обхода в цикле опроса больше нет.
+    assert "for node in nodes:" not in source
