@@ -254,6 +254,26 @@
   </details>
 </div>
 
+{% set orphans = inbounds | rejectattr('nodes') | list %}
+{% if orphans %}
+<div class="panel warn-panel">
+  <header>Подключения, которых нет ни на одном сервере</header>
+  <div class="body">
+    <p style="margin-top:0">
+      {% for inbound in orphans %}<b>{{ inbound.tag }}</b>{% if not loop.last %}, {% endif %}{% endfor %}
+      — {{ 'они существуют' if orphans | length > 1 else 'оно существует' }}
+      только в панели. Ссылки пользователям выдаются, а на серверах никто не
+      слушает: порт отвечает «connection refused», и человек видит просто
+      «не подключается».
+    </p>
+    <p class="muted" style="margin-bottom:0">
+      Лечится галочкой: «Настроить» у нужной строки → блок «Серверы» →
+      отметить, где поднять → «Сохранить».
+    </p>
+  </div>
+</div>
+{% endif %}
+
 <div class="panel">
   <header>Список подключений</header>
   {% if not inbounds %}
@@ -280,8 +300,8 @@
            важно их число, а имена показываем подсказкой. #}
         <td class="nowrap" title="{{ inbound.nodes | map(attribute='name') | join(', ') }}">
           {% if not inbound.nodes %}
-            <span class="muted">ни на одном сервере</span>
-            <div class="muted sub-line">никто его не получит</div>
+            <span class="badge err">не раскатано</span>
+            <div class="muted sub-line">ни на одном сервере</div>
           {% elif inbound.nodes | length == 1 %}
             {{ inbound.nodes[0].name }}
           {% else %}
