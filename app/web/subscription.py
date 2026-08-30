@@ -167,6 +167,7 @@ async def update_host(
     fingerprint: str = Form(default=""),
     allowinsecure: bool = Form(default=False),
     sort_order: int = Form(default=0),
+    node_id: Optional[str] = Form(default=None),
     user_id: str = Form(default=""),
     session: AsyncSession = Depends(get_session),
     admin: Admin = Depends(web_admin),
@@ -174,6 +175,12 @@ async def update_host(
     host = await session.get(Host, host_id)
     if host is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Хост не найден")
+
+    # Пустое значение — «всем серверам»: у переднего сервера или CDN адрес
+    # общий, привязка к одному серверу там только мешает. Поле может и не
+    # прийти (форма без выбора) — тогда привязку не трогаем.
+    if node_id is not None:
+        host.node_id = int(node_id) if node_id.strip().isdigit() else None
 
     host.remark = remark.strip() or "{flag} {node}"
     host.address = address.strip() or None

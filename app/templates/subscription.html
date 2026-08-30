@@ -1,8 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Подписка — VPN Panel{% endblock %}
 
-{% macro host_fields(host=None, securities=[]) %}
+{% macro host_fields(host=None, securities=[], scope_node=None) %}
 <div class="form-grid">
+  {% if scope_node %}
+  {# Открывая «Настроить» в строке сервера, настройку можно не привязывать
+     к нему одному: у переднего сервера или CDN адрес общий для всех. #}
+  <div>
+    <label>Применять к
+      <span class="muted">(всем — строка появится у каждого сервера)</span></label>
+    <select name="node_id">
+      <option value="{{ scope_node.id }}"
+              {% if not host or host.node_id %}selected{% endif %}>только {{ scope_node.name }}</option>
+      <option value=""
+              {% if host and not host.node_id %}selected{% endif %}>всем серверам</option>
+    </select>
+  </div>
+  {% endif %}
   <div>
     <label>Название в приложении</label>
     <input type="text" name="remark" value="{{ host.remark if host else '{flag} {node}' }}"
@@ -192,7 +206,7 @@
           {% if entry.host %}
             <form method="post" action="/subscription/hosts/{{ entry.host.id }}/update">
               <input type="hidden" name="user_id" value="{{ user.id }}">
-              {{ host_fields(entry.host, securities) }}
+              {{ host_fields(entry.host, securities, entry.node) }}
               <button type="submit" class="primary">Сохранить</button>
             </form>
           {% else %}
@@ -204,11 +218,10 @@
             <form method="post" action="/subscription/hosts/create">
               <input type="hidden" name="user_id" value="{{ user.id }}">
               <input type="hidden" name="inbound_id" value="{{ entry.inbound.id }}">
-              <input type="hidden" name="node_id" value="{{ entry.node.id }}">
-              {{ host_fields(none, securities) }}
+              {{ host_fields(none, securities, entry.node) }}
               <button type="submit" class="primary">Создать настройку</button>
               <span class="muted" style="margin-left:10px">
-                применится к «{{ entry.inbound.tag }}» на сервере {{ entry.node.name }}
+                для подключения «{{ entry.inbound.tag }}»
               </span>
             </form>
           {% endif %}

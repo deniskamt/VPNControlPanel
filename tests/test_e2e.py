@@ -724,11 +724,9 @@ def test_subscription_rows_can_be_interleaved(client, auth, inbound):
     assert created.status_code == 303, created.text
 
     # Номер немецкого сервера — из его же строки: в форме «создать настройку»
-    # он лежит рядом с подсказкой, к чему настройка применится.
+    # он стоит в выборе, к чему настройку применить.
     page = client.get(f"/subscription?user_id={user_id}").text
-    german_id = re.search(
-        r'name="node_id" value="(\d+)"[\s\S]{0,4000}?сервере DE-1', page
-    ).group(1)
+    german_id = re.search(r'<option value="(\d+)"[^>]*>только DE-1<', page).group(1)
 
     names = _subscription_names(client, auth)
     assert "через фронт" in names, names
@@ -943,3 +941,48 @@ def test_whole_matrix_saves_on_a_panel_of_nine_servers(client, auth, inbound):
 
     # В журнале — итог, а не простыня, и он не оборван.
     assert "убрано" in client.get("/logs").text
+
+
+def test_host_can_apply_to_every_server_without_picking_one(client, auth, inbound):
+    """«Настроить» в строке молча привязывала настройку к её серверу.
+
+    У переднего сервера и CDN адрес общий для всех, и выбирать сервер там
+    незачем — но другого способа, кроме как открыть строку конкретного
+    сервера, в разделе не было.
+    """
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_anynode", "proxies": {"vless": {}},
+              "inbounds": {"vless": ["VLESS-REALITY"]}, "expire": 0},
+    )
+
+    def front_links() -> int:
+        links = client.get("/api/user/user_anynode", headers=auth).json()["links"]
+        return sum(1 for link in links if "158.160.201.58" in link)
+
+    page = client.get("/subscription").text
+    nodes = sorted(set(re.findall(r'name="node" value="(\d+)"', page)), key=int)
+    assert len(nodes) >= 2, "для проверки нужно больше одного сервера"
+
+    # Форма отдаёт пустой node_id — «всем серверам».
+    created = client.post(
+        "/subscription/hosts/create",
+        data={"inbound_id": 1, "node_id": "", "remark": "{flag} Через фронт",
+              "address": "158.160.201.58"},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303, created.text
+    assert front_links() >= 2, "настройка осталась на одном сервере"
+
+    # И обратно: настройку можно вернуть одному серверу. Наша — самая свежая,
+    # то есть с наибольшим номером.
+    page = client.get("/subscription").text
+    host_id = max(int(item) for item in re.findall(r"/subscription/hosts/(\d+)/update", page))
+    client.post(
+        f"/subscription/hosts/{host_id}/update",
+        data={"remark": "{flag} Через фронт", "address": "158.160.201.58",
+              "node_id": nodes[0], "sort_order": 0},
+        follow_redirects=False,
+    )
+    assert front_links() == 1
