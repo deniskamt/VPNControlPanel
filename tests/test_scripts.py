@@ -111,3 +111,53 @@ def test_dest_scanner_checks_what_reality_needs():
     # Несуществующий домен не должен ронять скрипт.
     ok, note, _ = module.probe("this-domain-does-not-exist.invalid")
     assert ok is False and note
+
+
+def test_front_script_does_not_terminate_tls_itself():
+    """Передний сервер обязан отдавать поток байт в байт.
+
+    Обычный proxy_pass внутри http {} отвечает клиенту своим сертификатом,
+    и REALITY у клиента не сходится. Проверено на живом nginx: с ssl_preread
+    по имени домена поток уходит на нужный адрес, TLS остаётся нетронутым.
+    """
+    text = (Path(__file__).resolve().parent.parent / "scripts" / "setup_front.sh").read_text()
+
+    assert "ssl_preread on;" in text
+    # Внутри heredoc знак доллара экранирован — подставляет его nginx, не bash.
+    assert r"proxy_pass \$vpn_front_upstream;" in text
+    # Никакого http-прокси и никакого своего сертификата в потоке.
+    assert "ssl_certificate" not in text
+    assert "proxy_set_header" not in text
+
+
+def test_front_script_frees_443_and_keeps_the_panel_reachable():
+    """Порт 443 отдаётся stream, а http-серверы уезжают на localhost.
+
+    Если этого не сделать, nginx падает с «Address already in use» — и вместе
+    с ним уходит панель. Имена переехавших серверов обязаны попасть в правила,
+    иначе они перестанут открываться.
+    """
+    text = (Path(__file__).resolve().parent.parent / "scripts" / "setup_front.sh").read_text()
+
+    assert 'LOCAL_HTTPS="127.0.0.1:8443"' in text
+    assert 'listen ${LOCAL_HTTPS}' in text
+    assert 'printf \'%s %s;\\n\' "$name" "$LOCAL_HTTPS"' in text
+    assert "default ${LOCAL_HTTPS};" in text
+
+
+def test_front_script_survives_a_server_without_ipv6():
+    """listen [::] роняет nginx целиком там, где IPv6 выключен."""
+    text = (Path(__file__).resolve().parent.parent / "scripts" / "setup_front.sh").read_text()
+
+    assert "/proc/net/if_inet6" in text
+    # Безусловной строки с IPv6 в шаблоне конфига быть не должно.
+    assert "\n    listen [::]:443 reuseport;\n" not in text.split("cat > \"$FRONT_CONF\"")[-1]
+
+
+def test_front_script_rolls_back_when_nginx_refuses():
+    """Конфиг переднего сервера трогает работающую панель — откат обязателен."""
+    text = (Path(__file__).resolve().parent.parent / "scripts" / "setup_front.sh").read_text()
+
+    assert "cp -a /etc/nginx \"$BACKUP\"" in text
+    assert text.count("rollback") >= 3
+    assert "if ! nginx -t; then" in text
