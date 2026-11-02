@@ -19,24 +19,27 @@ scripts/install_agent.sh).
 
 from __future__ import annotations
 
+import concurrent.futures
 import hmac
 import json
 import os
 import re
+import socket
+import ssl
 import subprocess
 import threading
 import urllib.request
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import uvicorn
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 
 # Версия агента. Увеличивается при каждом изменении этого файла: панель
 # сравнивает её со своей и показывает, на каких нодах агент устарел.
-AGENT_VERSION = 4
+AGENT_VERSION = 5
 
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")
 AGENT_HOST = os.getenv("AGENT_HOST", "0.0.0.0")
@@ -757,6 +760,89 @@ def stats(reset: bool = Query(default=True)) -> Dict[str, Any]:
         "inbounds": inbounds,
         "total": {"uplink": total_up, "downlink": total_down},
     }
+
+
+# --- Проверка маскировочных доменов ------------------------------------------
+#
+# Годится ли домен для REALITY, зависит от того, откуда смотреть: TLS 1.3,
+# HTTP/2, сертификат и задержка у сайта с CDN разные в разных городах.
+# Поэтому проверка живёт в агенте — панель спрашивает каждую ноду сама.
+
+PROBE_TIMEOUT = 6.0
+PROBE_LIMIT = 80
+_HOSTNAME_RE = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+
+
+def _certificate_names(cert: Optional[Dict[str, Any]]) -> List[str]:
+    if not cert:
+        return []
+    names = [value for key, value in cert.get("subjectAltName", ()) if key == "DNS"]
+    for field in cert.get("subject", ()):
+        for key, value in field:
+            if key == "commonName" and value not in names:
+                names.append(value)
+    return names
+
+
+def _covers(domain: str, names: List[str]) -> bool:
+    for name in names:
+        if name == domain:
+            return True
+        if name.startswith("*.") and domain.endswith(name[1:]) and domain.count(".") == name.count("."):
+            return True
+    return False
+
+
+def probe_domain(domain: str) -> Dict[str, Any]:
+    """Проверить домен так, как его будет использовать REALITY."""
+    result: Dict[str, Any] = {"domain": domain, "ok": False, "ms": None, "note": ""}
+    context = ssl.create_default_context()
+    context.set_alpn_protocols(["h2", "http/1.1"])
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+    started = time.monotonic()
+    try:
+        with socket.create_connection((domain, 443), timeout=PROBE_TIMEOUT) as raw:
+            with context.wrap_socket(raw, server_hostname=domain) as tls:
+                result["ms"] = round((time.monotonic() - started) * 1000)
+                alpn = tls.selected_alpn_protocol()
+                names = _certificate_names(tls.getpeercert())
+    except ssl.SSLError as exc:
+        reason = getattr(exc, "reason", "") or str(exc)
+        if "VERSION" in reason.upper() or "PROTOCOL" in reason.upper():
+            result["note"] = "нет TLS 1.3"
+        else:
+            result["note"] = f"TLS не сложился: {reason}"
+        return result
+    except socket.timeout:
+        result["note"] = "таймаут"
+        return result
+    except OSError as exc:
+        result["note"] = f"недоступен: {exc.strerror or exc}"
+        return result
+
+    if alpn != "h2":
+        result["note"] = "нет HTTP/2"
+    elif not _covers(domain, names):
+        result["note"] = "сертификат выписан на другое имя"
+    else:
+        result["ok"] = True
+        result["note"] = "годится"
+    return result
+
+
+@app.post("/probe", dependencies=[Depends(require_token)])
+def probe(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Проверить список доменов с этой ноды — параллельно, с общим таймаутом."""
+    raw = payload.get("domains") or []
+    domains = []
+    for item in raw[:PROBE_LIMIT]:
+        name = str(item).strip().lower()
+        # Только имена хостов: ручка не должна становиться сканером чего угодно.
+        if _HOSTNAME_RE.match(name) and name not in domains:
+            domains.append(name)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(probe_domain, domains))
+    return {"results": results}
 
 
 def main() -> None:

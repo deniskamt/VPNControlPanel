@@ -14,9 +14,9 @@ from app.models.admin import Admin
 from app.models.enums import NetworkType, ProxyType, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
+from app.services import masking, xray_import
 from app.services import presets as preset_service
 from app.services import users as user_service
-from app.services import xray_import
 from app.services.audit import log_action
 from app.services.worker import trigger_sync
 from app.web.templates import templates
@@ -122,10 +122,22 @@ async def quick_create(
     if template is None:
         raise HTTPException(422, f"Неизвестный шаблон: {preset}")
 
+    domain = masking.clean(masking_domain)
+    if domain and not masking.is_valid(domain):
+        raise HTTPException(
+            422, f"«{masking_domain}» не похоже на имя сайта — нужно вроде www.example.com"
+        )
+
     existing = list(
         (await session.execute(select(Inbound.tag))).scalars().all()
     )
     tag = preset_service.suggest_tag(template, existing)
+    # Уже занятые домены — чтобы случайный выбор не дал второе подключение
+    # под той же маской.
+    taken = [
+        masking.domain_for(settings, None)
+        for settings in (await session.execute(select(Inbound.settings))).scalars().all()
+    ]
 
     inbound = Inbound(
         tag=tag,
@@ -137,11 +149,12 @@ async def quick_create(
         listen="0.0.0.0",
         settings=preset_service.build_settings(
             template,
-            masking_domain=masking_domain,
+            masking_domain=domain,
             certificate_file=certificate_file,
             key_file=key_file,
             sni=sni,
             obfuscate=obfuscate,
+            taken=[item for item in taken if item],
         ),
     )
 

@@ -13,6 +13,7 @@ from typing import Optional
 import bcrypt
 import jwt
 
+from app.core.clock import to_ts
 from app.core.config import settings
 
 ALGORITHM = "HS256"
@@ -46,8 +47,8 @@ def create_admin_token(username: str, expire_minutes: Optional[int] = None) -> s
     payload = {
         "sub": username,
         "access": "admin",
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=minutes)).timestamp()),
+        "iat": to_ts(now),
+        "exp": to_ts(now + timedelta(minutes=minutes)),
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 

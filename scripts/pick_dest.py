@@ -98,7 +98,13 @@ def covers(domain: str, names: List[str]) -> bool:
     for name in names:
         if name == domain:
             return True
-        if name.startswith("*.") and domain.endswith(name[1:]):
+        # Маска покрывает ровно одну метку: *.example.com подходит для
+        # www.example.com, но не для a.b.example.com — так считает TLS.
+        if (
+            name.startswith("*.")
+            and domain.endswith(name[1:])
+            and domain.count(".") == name.count(".")
+        ):
             return True
     return False
 

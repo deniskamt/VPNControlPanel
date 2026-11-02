@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import to_ts
 from app.models.enums import DataLimitResetStrategy, ProxyType, UserStatus
 from app.models.inbound import Inbound
 from app.models.node import Node
@@ -188,7 +189,7 @@ def subscription_token(user: User) -> str:
     работает через сравнение с sub_revoked_at при проверке.
     """
     moment = user.sub_revoked_at or user.created_at or datetime.utcnow()
-    return create_subscription_token(user.username, int(moment.timestamp()))
+    return create_subscription_token(user.username, to_ts(moment))
 
 
 def ensure_credentials(user: User) -> List[ProxyType]:

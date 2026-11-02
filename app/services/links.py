@@ -15,9 +15,9 @@ from app.models.enums import NetworkType, ProxyType, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.models.user import User
-from app.services import hysteria, shadowsocks, xhttp
+from app.services import hysteria, masking, shadowsocks, xhttp
 from app.services.flags import country_flag
-
+from app.services.presets import DEFAULT_FINGERPRINT
 
 # Название по умолчанию: флаг впереди, потому что клиентские приложения
 # рисуют иконку страны только по эмодзи в названии, а не по нашему полю.
@@ -136,9 +136,11 @@ def _security_params(
 
     # reality
     params["security"] = "reality"
-    server_names: List[str] = opts.get("serverNames") or []
-    sni = (host.sni if host and host.sni else None) or (
-        server_names[0] if server_names else node.address
+    # Свой домен сервера, если задан, иначе общий у подключения.
+    sni = (
+        (host.sni if host and host.sni else None)
+        or masking.domain_for(opts, node.id)
+        or node.address
     )
     params["sni"] = sni
     if opts.get("publicKey"):
@@ -149,7 +151,10 @@ def _security_params(
     params["fp"] = (
         (host.fingerprint if host and host.fingerprint else None)
         or opts.get("fingerprint")
-        or "chrome"
+        # Тот же отпечаток, что ставят шаблоны. Подключения, заведённые
+        # руками или перенесённые из Marzban, поля не имеют — и получали
+        # chrome, который у части российских операторов как раз помечен.
+        or DEFAULT_FINGERPRINT
     )
     if opts.get("spiderX"):
         params["spx"] = opts["spiderX"]

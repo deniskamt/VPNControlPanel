@@ -24,14 +24,12 @@ REALITY, shortId, пути, пароли), панель генерирует с�
 подключения уже раздавались, но начинать с них не стоит.
 """
 
+import secrets
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from app.models.enums import NetworkType, ProxyType, SecurityType
-from app.services import shadowsocks, xhttp
-import secrets
-
-from app.services import hysteria
+from app.services import hysteria, masking, shadowsocks, xhttp
 from app.services.keys import generate_path, generate_reality_keypair, generate_short_id
 
 
@@ -277,15 +275,9 @@ PRESETS_BY_KEY: Dict[str, Preset] = {preset.key: preset for preset in PRESETS}
 CURRENT_PRESETS: List[Preset] = [preset for preset in PRESETS if not preset.legacy]
 LEGACY_PRESETS: List[Preset] = [preset for preset in PRESETS if preset.legacy]
 
-# Домены, под которые прячется REALITY. Годятся сайты с TLS 1.3 и HTTP/2,
-# которые не блокируются и не принадлежат вам.
-MASKING_DOMAINS = [
-    "www.microsoft.com",
-    "www.samsung.com",
-    "www.cloudflare.com",
-    "dl.google.com",
-    "www.lovelive-anime.jp",
-]
+# Домены, под которые прячется REALITY. Сам каталог, с группами и пояснениями,
+# живёт в services/masking.py; здесь — плоский список для старых мест.
+MASKING_DOMAINS = masking.ALL_DOMAINS
 
 # Отпечаток TLS-клиента. Не chrome: у части российских операторов отпечатки
 # chrome/safari/ios попали в подозрительные, а firefox проходит. Клиент может
@@ -312,12 +304,13 @@ def build_settings(
     key_file: Optional[str] = None,
     sni: Optional[str] = None,
     obfuscate: bool = False,
+    taken: Sequence[str] = (),
 ) -> Dict[str, Any]:
     """Собирает параметры inbound'а, генерируя всё, что можно сгенерировать."""
     settings: Dict[str, Any] = {}
 
     if preset.protocol == ProxyType.hysteria2:
-        domain = (masking_domain or MASKING_DOMAINS[0]).strip()
+        domain = masking.clean(masking_domain) or masking.pick_default(taken)
         settings.update(
             {
                 "masquerade": f"https://{domain}/",
@@ -332,7 +325,7 @@ def build_settings(
         return settings
 
     if preset.security == SecurityType.reality:
-        domain = (masking_domain or MASKING_DOMAINS[0]).strip()
+        domain = masking.clean(masking_domain) or masking.pick_default(taken)
         private_key, public_key = generate_reality_keypair()
         settings.update(
             {

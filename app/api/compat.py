@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import api_admin
+from app.core.clock import now_ts
 from app.core.config import settings
 from app.core.database import get_session
 from app.core.security import create_admin_token, verify_password
@@ -320,7 +321,7 @@ async def modify_user(
 
     # Продление подписки должно возвращать пользователя в строй.
     if user.status in (UserStatus.expired, UserStatus.limited):
-        expired = bool(user.expire) and user.expire <= int(datetime.utcnow().timestamp())
+        expired = bool(user.expire) and user.expire <= now_ts()
         limited = bool(user.data_limit) and user.used_traffic >= user.data_limit
         if not expired and not limited:
             user.status = UserStatus.active

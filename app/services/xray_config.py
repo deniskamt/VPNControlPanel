@@ -9,13 +9,13 @@
 
 import hashlib
 import json
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 from app.models.enums import NetworkType, ProxyType, SecurityType, UserStatus
 from app.models.inbound import Inbound
 from app.models.node import Node
 from app.models.user import User
-from app.services import shadowsocks, xhttp
+from app.services import masking, shadowsocks, xhttp
 
 API_PORT = 10085
 API_TAG = "api"
@@ -23,7 +23,7 @@ API_TAG = "api"
 ACCESS_LOG = "/usr/local/etc/xray/access.log"
 
 
-def _stream_settings(inbound: Inbound) -> Dict[str, Any]:
+def _stream_settings(inbound: Inbound, node_id: Optional[int] = None) -> Dict[str, Any]:
     opts = inbound.settings or {}
     stream: Dict[str, Any] = {"network": inbound.network.value}
 
@@ -77,11 +77,22 @@ def _stream_settings(inbound: Inbound) -> Dict[str, Any]:
         stream["tlsSettings"] = tls
     elif inbound.security == SecurityType.reality:
         stream["security"] = "reality"
+        dest = opts.get("dest", "www.google.com:443")
+        server_names = list(opts.get("serverNames") or [])
+        # Свой домен у этого сервера: одинаковый домен на всех серверах —
+        # одна примета на весь сервис, а за передним сервером ещё и ошибка
+        # маршрутизации (nginx различает ноды только по имени). Общие имена
+        # остаются в списке: подписки, полученные до смены домена, должны
+        # подключаться, пока клиент их не обновит.
+        own = masking.node_domains(opts).get(str(node_id)) if node_id is not None else None
+        if own:
+            dest = f"{own}:443"
+            server_names = [own] + [name for name in server_names if name != own]
         stream["realitySettings"] = {
             "show": False,
-            "dest": opts.get("dest", "www.google.com:443"),
+            "dest": dest,
             "xver": opts.get("xver", 0),
-            "serverNames": opts.get("serverNames") or [],
+            "serverNames": server_names,
             "privateKey": opts.get("privateKey", ""),
             "shortIds": opts.get("shortIds") or [""],
         }
@@ -159,7 +170,9 @@ def _inbound_settings(inbound: Inbound, clients: List[Dict[str, Any]]) -> Dict[s
     return settings
 
 
-def build_inbound(inbound: Inbound, users: Iterable[User]) -> Dict[str, Any]:
+def build_inbound(
+    inbound: Inbound, users: Iterable[User], node_id: Optional[int] = None
+) -> Dict[str, Any]:
     # Сортировка не косметика: от порядка ключей зависит отпечаток конфига,
     # а от него — будет ли панель перезаливать его на ноду. Перезаливка
     # перезапускает Xray и рвёт все соединения.
@@ -175,7 +188,7 @@ def build_inbound(inbound: Inbound, users: Iterable[User]) -> Dict[str, Any]:
         "port": inbound.port,
         "protocol": inbound.protocol.value,
         "settings": _inbound_settings(inbound, clients),
-        "streamSettings": _stream_settings(inbound),
+        "streamSettings": _stream_settings(inbound, node_id),
     }
     if inbound.sniffing:
         config["sniffing"] = {
@@ -230,7 +243,9 @@ def build_node_config(node: Node, users: Iterable[User]) -> Dict[str, Any]:
         # ноду своим полем (см. services/hysteria.py).
         if inbound.protocol == ProxyType.hysteria2:
             continue
-        inbounds.append(build_inbound(inbound, allowed_by_inbound.get(inbound.id, [])))
+        inbounds.append(
+            build_inbound(inbound, allowed_by_inbound.get(inbound.id, []), node.id)
+        )
 
     return {
         # Access-лог нужен для подсчёта устройств: агент достаёт из него

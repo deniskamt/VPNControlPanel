@@ -1,6 +1,6 @@
 """Управление пользователями и подписками."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import web_admin
+from app.core.clock import now_ts
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.access import UserNodeAccess
@@ -49,7 +50,7 @@ def _redirect(query: str = "") -> RedirectResponse:
 def _expire_from_days(days: Optional[int]) -> Optional[int]:
     if not days or days <= 0:
         return None
-    return int((datetime.utcnow() + timedelta(days=days)).timestamp())
+    return now_ts() + days * 86400
 
 
 @router.get("", response_class=HTMLResponse)
@@ -235,7 +236,7 @@ async def update_user(
 
     if days:
         # Продление считаем от текущей даты окончания, если она в будущем.
-        now = int(datetime.utcnow().timestamp())
+        now = now_ts()
         base = user.expire if user.expire and user.expire > now else now
         user.expire = base + days * 86400
     user.data_limit = int(data_limit_gb * GB) if data_limit_gb else None

@@ -20,7 +20,6 @@ import asyncio
 import socket
 import sys
 from pathlib import Path
-from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -30,7 +29,6 @@ from app.core.database import SessionLocal  # noqa: E402
 from app.models.enums import ProxyType  # noqa: E402
 from app.models.inbound import Inbound  # noqa: E402
 from app.models.node import Node  # noqa: E402
-from app.services import hysteria  # noqa: E402
 
 TIMEOUT = 5.0
 

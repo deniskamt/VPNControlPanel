@@ -8,6 +8,7 @@
 from base64 import b64encode
 from datetime import datetime
 from typing import List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -57,6 +58,29 @@ def _b64_header(value: str) -> str:
     return f"base64:{encoded}"
 
 
+def _ascii_url(value: str) -> str:
+    """Ссылка, пригодная для заголовка: не-ASCII — в процентной записи.
+
+    Заголовки HTTP — только latin-1. Ссылка поддержки с кириллицей
+    (t.me/поддержка) роняла выдачу подписки у всех пользователей разом:
+    одна опечатка в «Настройках» — и пятисотка вместо конфигов.
+    """
+    return quote(value, safe=":/?#[]@!$&'()*+,;=%~")
+
+
+def _content_disposition(username: str) -> str:
+    """Имя файла подписки: ASCII-запасное плюс точное по RFC 6266.
+
+    Имя пользователя с кириллицей или кавычкой в заголовке как есть давало
+    UnicodeEncodeError — и подписка этого человека не открывалась вовсе.
+    """
+    fallback = "".join(
+        char if char.isascii() and char.isprintable() and char not in '"\\' else "_"
+        for char in username
+    ) or "subscription"
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(username, safe='')}"
+
+
 def _headers(user: User, options: Optional[dict] = None) -> dict:
     options = options or {}
     title = options.get("subscription_title") or settings.SUBSCRIPTION_TITLE
@@ -65,11 +89,11 @@ def _headers(user: User, options: Optional[dict] = None) -> dict:
     )
 
     headers = {
-        "content-disposition": f'attachment; filename="{user.username}"',
+        "content-disposition": _content_disposition(user.username),
         "profile-title": _b64_header(title),
         "profile-update-interval": interval,
         "subscription-userinfo": _user_info_header(user),
-        "profile-web-page-url": settings.subscription_base,
+        "profile-web-page-url": _ascii_url(settings.subscription_base),
     }
 
     # Объявление показывается прямо в карточке подписки, ссылка поддержки —
@@ -79,10 +103,10 @@ def _headers(user: User, options: Optional[dict] = None) -> dict:
         headers["announce"] = _b64_header(announce)
     announce_url = (options.get("announce_url") or "").strip()
     if announce_url:
-        headers["announce-url"] = announce_url
+        headers["announce-url"] = _ascii_url(announce_url)
     support_url = (options.get("support_url") or "").strip()
     if support_url:
-        headers["support-url"] = support_url
+        headers["support-url"] = _ascii_url(support_url)
 
     return headers
 

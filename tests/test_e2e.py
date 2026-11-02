@@ -986,3 +986,76 @@ def test_host_can_apply_to_every_server_without_picking_one(client, auth, inboun
         follow_redirects=False,
     )
     assert front_links() == 1
+
+
+def test_masking_page_sets_a_domain_per_server(client, auth, inbound):
+    """Свой маскировочный домен у сервера — и в ссылке, и в разделе."""
+    page = client.get("/masking")
+    assert page.status_code == 200
+    assert "Подбор маскировки" in page.text and "www.lovelive-anime.jp" in page.text
+
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_mask", "proxies": {"vless": {}},
+              "inbounds": {"vless": ["VLESS-REALITY"]}, "expire": 0},
+    )
+    saved = client.post(
+        "/masking/1/node-domain",
+        data={"node_id": 1, "domain": "https://www.kone.com/"},
+        follow_redirects=False,
+    )
+    assert saved.status_code == 303, saved.text
+
+    links = client.get("/api/user/user_mask", headers=auth).json()["links"]
+    assert any("nl1.example.com" in link and "sni=www.kone.com" in link for link in links), links
+    # Остальные серверы остались на общем домене.
+    assert any("sni=www.microsoft.com" in link for link in links), links
+
+    # Мусор вместо домена — понятный отказ, а не сломанный конфиг.
+    bad = client.post("/masking/1/node-domain", data={"node_id": 1, "domain": "не домен"},
+                      follow_redirects=False)
+    assert bad.status_code == 422
+
+    # Раздавать без проверки нечем — и панель так и говорит.
+    assert client.post("/masking/1/auto", follow_redirects=False).status_code == 409
+
+    # Проверка с нод, которые не отвечают, не роняет страницу: ошибка видна.
+    probed = client.post("/masking/probe", data={"extra": "www.example.jp", "only_extra": "true"},
+                         follow_redirects=False)
+    assert probed.status_code == 303
+    assert "агент не отвечает" in client.get("/masking").text
+
+    # Сброс — пустое поле.
+    client.post("/masking/1/node-domain", data={"node_id": 1, "domain": ""}, follow_redirects=False)
+    links = client.get("/api/user/user_mask", headers=auth).json()["links"]
+    assert not any("sni=www.kone.com" in link for link in links)
+
+
+def test_subscription_survives_non_ascii_in_headers(client, auth, inbound):
+    """Заголовки HTTP — только latin-1.
+
+    Кириллица в имени пользователя роняла его подписку, а в ссылке поддержки —
+    подписку у всех сразу: одна опечатка в «Настройках», и пятисотка вместо
+    конфигов.
+    """
+    created = client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "вася", "proxies": {"vless": {}},
+              "inbounds": {"vless": ["VLESS-REALITY"]}, "expire": 0},
+    )
+    assert created.status_code == 200, created.text
+    path = created.json()["subscription_url"].replace("https://vpn.example.com", "")
+
+    client.post("/settings/subscription",
+                data={"support_url": "https://t.me/поддержка", "announce_url": "https://сайт.рф/"},
+                follow_redirects=False)
+
+    response = client.get(path, headers={"User-Agent": "v2rayNG/1.8.5"})
+    assert response.status_code == 200
+    assert "filename*=UTF-8''%D0%B2" in response.headers["content-disposition"]
+    assert response.headers["support-url"] == "https://t.me/%D0%BF%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%BA%D0%B0"
+
+    # Возвращаем настройки, чтобы не мешать соседним проверкам.
+    client.post("/settings/subscription", data={}, follow_redirects=False)

@@ -15,22 +15,22 @@ from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import now_ts
 from app.core.config import settings
 from app.models.access import UserNodeAccess
 from app.models.enums import DataLimitResetStrategy, NodeStatus, UserStatus
 from app.models.node import Node
 from app.models.usage import NodeUsage, NodeUserUsage, SystemUsage
 from app.models.user import User
-from app.services import notifier
+from app.services import hysteria, notifier
 from app.services.audit import log_action
 from app.services.node_client import NodeClient, NodeError
-from app.services.xray_errors import explain
-from app.services import hysteria
 from app.services.xray_config import (
     allowed_users_by_inbound,
     build_node_config,
     config_hash,
 )
+from app.services.xray_errors import explain
 
 
 async def load_users(session: AsyncSession) -> List[User]:
@@ -440,7 +440,7 @@ async def apply_traffic_resets(session: AsyncSession) -> int:
 
 async def enforce_limits(session: AsyncSession) -> int:
     """Перевести истёкших и превысивших лимит в неактивные статусы."""
-    now = int(datetime.utcnow().timestamp())
+    now = now_ts()
     changed = 0
 
     result = await session.execute(

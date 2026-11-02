@@ -15,6 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.clock import now_ts
 from app.models.base import Base, TimestampMixin
 from app.models.enums import DataLimitResetStrategy, ProxyType, UserStatus
 
@@ -97,7 +98,7 @@ class User(Base, TimestampMixin):
 
     @property
     def expired(self) -> bool:
-        return bool(self.expire) and self.expire <= int(datetime.utcnow().timestamp())
+        return bool(self.expire) and self.expire <= now_ts()
 
     @property
     def limited(self) -> bool:

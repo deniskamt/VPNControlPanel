@@ -132,3 +132,17 @@ class NodeClient:
                 "будет работать кнопка"
             ),
         )
+
+    async def probe_domains(self, domains: list) -> Dict[str, Any]:
+        """Проверить маскировочные домены с этой ноды (TLS 1.3, h2, сертификат)."""
+        return await self._request(
+            "POST",
+            "/probe",
+            json={"domains": domains},
+            # Десятки рукопожатий, часть упирается в таймаут — это не быстро.
+            timeout=max(self.timeout, 60),
+            missing_hint=(
+                "агент на этой ноде старее версии 5 и не умеет проверять домены. "
+                "Обновите его кнопкой «Обновить» в разделе «Серверы»"
+            ),
+        )

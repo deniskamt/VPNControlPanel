@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Подбор маскировки — VPN Panel{% endblock %}
+
+{% block content %}
+<datalist id="masking-domains">
+  {% for domain in all_domains %}<option value="{{ domain }}">{% endfor %}
+</datalist>
+
+<div class="page-head">
+  <div>
+    <h1>Подбор маскировки</h1>
+    <div class="sub">Под какой сайт прячется REALITY — на каждом сервере свой</div>
+  </div>
+  <a class="btn" href="/inbounds">← Подключения</a>
+</div>
+
+<div class="hint-box">
+  <b>Почему работает только малоизвестный домен.</b>
+  www.microsoft.com, dl.google.com, www.samsung.com стоят в каждом втором
+  гайде: сочетание «SNI крупного сайта, а адрес — дешёвый VPS» по ним
+  вычисляется статистикой. www.cloudflare.com в России режется сам по себе.
+  Поэтому выживает домен, которого нет в гайдах, — и лучше, если у каждого
+  сервера он свой: одинаковый домен на всех — одна примета на весь сервис.
+</div>
+
+<div class="panel" id="probe">
+  <header>
+    1. Проверить домены с серверов
+    <span class="muted" style="font-weight:400">каждая нода проверяет сама — TLS 1.3, HTTP/2, сертификат, задержка</span>
+  </header>
+  <div class="body">
+    <form method="post" action="/masking/probe">
+      <label>Свои домены <span class="muted">(необязательно, через пробел или запятую)</span></label>
+      <input type="text" name="extra" placeholder="www.example.jp, shop.example.de">
+      <div class="checks" style="margin:8px 0 12px">
+        <label><input type="checkbox" name="only_extra" value="true"> проверить только их, без каталога</label>
+      </div>
+      <button type="submit" class="primary">Проверить домены с серверов</button>
+      <span class="muted" style="margin-left:10px">
+        {{ all_domains | length }} доменов из каталога, до минуты. Нужен агент версии 5 — старый обновляется в «Серверах»
+      </span>
+    </form>
+  </div>
+</div>
+
+{% if probed_nodes %}
+<div class="panel" id="results">
+  <header>
+    Результаты проверки
+    <span class="muted" style="font-weight:400">выше — домены, годные на большем числе серверов; цифра — задержка рукопожатия от сервера</span>
+  </header>
+  {% for node in probed_nodes %}
+    {% if probe[node.id].error %}
+      <div class="body node-error"><b>{{ node.name }}:</b> {{ probe[node.id].error }}</div>
+    {% endif %}
+  {% endfor %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Домен</th>
+          {% for node in probed_nodes %}<th>{{ node.name }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in summary %}
+        <tr>
+          <td class="mono nowrap">
+            {{ row.domain }}
+            {% if row.discouraged %}<span class="badge warn" title="Из популярных гайдов — вычисляется в первую очередь">из гайдов</span>{% endif %}
+          </td>
+          {% for node in probed_nodes %}
+            {% set item = row.by_node.get(node.id) %}
+            <td class="nowrap">
+              {% if not item %}<span class="muted">—</span>
+              {% elif item.ok %}<span class="badge ok">{{ item.ms }} мс</span>
+              {% else %}<span class="badge err" title="{{ item.note }}">✗</span>
+                <span class="muted" style="font-size:12px">{{ item.note }}</span>
+              {% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="panel">
+  <header>
+    2. Домен у каждого сервера
+    <span class="muted" style="font-weight:400">пустое поле — общий домен подключения</span>
+  </header>
+  {% if not plans %}
+    <div class="empty">Подключений REALITY нет — создайте их в разделе <a href="/inbounds">Подключения</a>.</div>
+  {% endif %}
+  {% for plan in plans %}
+    <div class="body" id="inbound-{{ plan.inbound.id }}" style="border-top:1px solid var(--border)">
+      <div class="actions" style="justify-content:space-between">
+        <div>
+          <b>{{ plan.inbound.tag }}</b>
+          <span class="muted">порт {{ plan.inbound.port }} · общий домен <span class="mono">{{ plan.shared }}</span></span>
+        </div>
+        <form class="inline" method="post" action="/masking/{{ plan.inbound.id }}/auto"
+              data-confirm="Раздать серверам «{{ plan.inbound.tag }}» разные домены по последней проверке? Клиенты получат новые ссылки при обновлении подписки.">
+          <button class="small primary" type="submit" {% if not probed_nodes %}disabled title="Сначала проверьте домены с серверов"{% endif %}>Раздать лучшие домены</button>
+        </form>
+      </div>
+
+      {% if plan.duplicates %}
+        <div class="warn-panel" style="margin-top:10px">
+          {% for domain, ids in plan.duplicates.items() %}
+            Домен <span class="mono">{{ domain }}</span> стоит сразу на
+            {% for node_id in ids %}{{ node_names[node_id] }}{% if not loop.last %}, {% endif %}{% endfor %}.
+          {% endfor %}
+          Одинаковый домен — одна примета на все эти серверы, а за передним
+          сервером nginx их ещё и не различит.
+        </div>
+      {% endif %}
+
+      {% if not plan.rows %}
+        <p class="muted">Подключение не поднято ни на одном сервере.</p>
+      {% else %}
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <thead><tr><th>Сервер</th><th>Сейчас</th><th>Свой домен</th></tr></thead>
+          <tbody>
+          {% for row in plan.rows %}
+            <tr>
+              <td class="nowrap">{{ row.node.name | flags }}<div class="muted sub-line">{{ row.node.address }}</div></td>
+              <td class="mono nowrap">
+                {{ row.effective }}
+                {% if row.effective in discouraged %}<span class="badge warn">из гайдов</span>{% endif %}
+              </td>
+              <td>
+                <form method="post" action="/masking/{{ plan.inbound.id }}/node-domain" class="actions" style="flex-wrap:nowrap">
+                  <input type="hidden" name="node_id" value="{{ row.node.id }}">
+                  <input type="text" name="domain" list="masking-domains" value="{{ row.own }}"
+                         placeholder="как у подключения" style="min-width:220px">
+                  <button class="small" type="submit">Сохранить</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  {% endfor %}
+  <div class="body muted" style="border-top:1px solid var(--border)">
+    После смены домена сервер получает новый конфиг сразу, а клиенты — новую
+    ссылку при обновлении подписки. Старый домен до этого продолжает работать.
+    Если сервер раздаётся через передний сервер, туда тоже нужно новое правило:
+    <span class="mono">bash setup_front.sh --node &lt;IP:порт&gt; --sni &lt;новый домен&gt;</span>.
+  </div>
+</div>
+
+<div class="panel">
+  <header>Каталог доменов <span class="muted" style="font-weight:400">кандидаты — годятся ли, решает проверка с сервера</span></header>
+  {% for group in catalog %}
+    <div class="body" style="border-top:1px solid var(--border)">
+      <b>{{ group.title }}</b>
+      <p class="muted" style="margin:4px 0 8px">{{ group.note }}</p>
+      <div class="mono" style="font-size:12px;line-height:1.9">
+        {% for domain in group.domains %}{{ domain }}{% if not loop.last %} · {% endif %}{% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -78,6 +78,7 @@
     <h1>Подключения</h1>
     <div class="sub">Панель сама раскатывает их на серверы и держит конфиг Xray в актуальном виде</div>
   </div>
+  <a class="btn" href="/masking">Подбор маскировки</a>
 </div>
 
 <div class="panel">
@@ -146,10 +147,15 @@
           <input type="number" name="port" value="0">
         </div>
         <div>
-          <label>Маскировочный домен <span class="muted">(для REALITY)</span></label>
-          <select name="masking_domain">
-            {% for domain in masking_domains %}<option value="{{ domain }}">{{ domain }}</option>{% endfor %}
-          </select>
+          <label>Маскировочный домен <span class="muted">(для REALITY; пусто — свободный из каталога)</span></label>
+          {# Поле, а не список: годится любой сайт с TLS 1.3 и HTTP/2, а
+             выживают как раз малоизвестные, которых в списке быть не может. #}
+          <input type="text" name="masking_domain" list="masking-domains"
+                 placeholder="выберите или впишите свой">
+          <datalist id="masking-domains">
+            {% for domain in masking_domains %}<option value="{{ domain }}">{% endfor %}
+          </datalist>
+          <a class="muted" href="/masking" style="font-size:12px">проверить домены с серверов →</a>
         </div>
         <div>
           <label>Домен / SNI <span class="muted">(для TLS)</span></label>
