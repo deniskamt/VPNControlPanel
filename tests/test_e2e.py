@@ -1059,3 +1059,43 @@ def test_subscription_survives_non_ascii_in_headers(client, auth, inbound):
 
     # Возвращаем настройки, чтобы не мешать соседним проверкам.
     client.post("/settings/subscription", data={}, follow_redirects=False)
+
+
+def test_nodes_page_shows_who_sits_on_which_server(client, auth, inbound):
+    """Во «Серверах» видно, кто на каком сервере, — по трафику через него."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from app.core.config import settings
+    from app.models.node import Node
+    from app.models.user import User
+    from app.services import node_manager
+
+    client.post(
+        "/api/user",
+        headers=auth,
+        json={"username": "user_onnode", "proxies": {"vless": {}},
+              "inbounds": {"vless": ["VLESS-REALITY"]}, "expire": 0},
+    )
+
+    async def traffic() -> None:
+        # Отдельный движок: пул приложения живёт в цикле TestClient.
+        engine = create_async_engine(settings.DATABASE_URL)
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            node = await session.get(Node, 1)
+            await node_manager._record_usage(
+                session, node, {"user_onnode": {"uplink": 1000, "downlink": 5000}}, {}
+            )
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(traffic())
+
+    page = client.get("/nodes").text
+    row = page.split('id="users-1"', 1)[1].split("</tr>\n      {% endif %}", 1)[0]
+    assert "user_onnode" in row
+    assert "в сети" in page
+    # На другом сервере этого человека нет.
+    other = page.split('id="users-2"', 1)
+    assert len(other) == 1 or "user_onnode" not in other[1].split('id="more-2"', 1)[0]

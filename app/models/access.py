@@ -31,6 +31,9 @@ class UserNodeAccess(Base):
     data_limit: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     used_traffic: Mapped[int] = mapped_column(BigInteger, default=0)
     reset_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Когда через этот сервер последний раз шёл трафик пользователя: по этой
+    # метке «Серверы» показывают, кто на каком сервере сидит.
+    online_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="node_access")  # noqa: F821
     node: Mapped["Node"] = relationship()  # noqa: F821

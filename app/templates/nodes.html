@@ -109,7 +109,7 @@
     <thead>
       <tr>
         <th>Сервер</th><th>Состояние</th><th>Нагрузка</th>
-        <th>Трафик</th><th>Подключения</th><th></th>
+        <th>Трафик</th><th>Пользователи</th><th></th>
       </tr>
     </thead>
     <tbody>
@@ -144,8 +144,22 @@
             {% endif %}
           </div>
         </td>
-        <td class="nowrap">{{ (node.uplink + node.downlink) | bytes }}</td>
-        <td>{{ node.inbounds | length }}</td>
+        <td class="nowrap">
+          {{ (node.uplink + node.downlink) | bytes }}
+          <div class="muted sub-line">подключений: {{ node.inbounds | length }}</div>
+        </td>
+        <td class="nowrap">
+          {# Кто сидит на сервере — по трафику: сервер, через который у
+             человека последним шли данные. Список раскрывается строкой ниже. #}
+          {% set seen = node_users.get(node.id, []) %}
+          {% if seen %}
+            <button class="small" data-toggle="#users-{{ node.id }}"
+                    title="Кто был на сервере за сутки">
+              {% if online_counts[node.id] %}<span class="dot online"></span>{{ online_counts[node.id] }} в сети
+              {% else %}{{ seen | length }} за сутки{% endif %}
+            </button>
+          {% else %}<span class="muted">никого</span>{% endif %}
+        </td>
         <td>
           {# Наружу — то, чем пользуются каждый день. Остальное под «Ещё»:
              восемь кнопок в столбик растягивали строку на пол-экрана.
@@ -163,6 +177,32 @@
           </div>
         </td>
       </tr>
+      {% if node_users.get(node.id) %}
+      <tr class="row-detail" id="users-{{ node.id }}" hidden>
+        <td colspan="6">
+          <div class="muted" style="margin-bottom:8px">
+            Кто был на {{ node.name }} за последние сутки — по трафику через этот сервер.
+            Один человек может быть сразу на нескольких серверах: телефон на одном, ноутбук на другом.
+          </div>
+          <table class="inner-users">
+            <thead><tr><th>Пользователь</th><th>Когда</th><th>Трафик на этом сервере</th></tr></thead>
+            <tbody>
+            {% for row in node_users[node.id] %}
+              <tr>
+                <td class="nowrap">
+                  <span class="dot {{ 'online' if row.online else 'mute' }}"></span>
+                  <a href="/users/{{ row.user.id }}">{{ row.user.username }}</a>
+                  {% if row.user.status.value != 'active' %}<span class="badge warn">{{ row.user.status.value }}</span>{% endif %}
+                </td>
+                <td class="nowrap {{ '' if row.online else 'muted' }}">{{ row.online_at | last_seen }}</td>
+                <td class="nowrap">{{ row.used_traffic | bytes }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </td>
+      </tr>
+      {% endif %}
       <tr class="row-detail" id="more-{{ node.id }}" hidden>
         <td colspan="6">
           <div class="row-actions">

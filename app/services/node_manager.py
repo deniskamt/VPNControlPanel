@@ -279,6 +279,7 @@ async def _record_usage(
         # и видно, куда именно ходит пользователь.
         access = await _get_or_create_access(session, user.id, node.id)
         access.used_traffic += delta
+        access.online_at = now
 
         existing = await session.execute(
             select(NodeUserUsage).where(

@@ -54,3 +54,43 @@ def last_seen(moment: Optional[datetime]) -> str:
     if days < 30:
         return f"{days} дн назад"
     return moment.strftime("%d.%m.%Y")
+
+
+# Сколько времени назад ещё показывать человека в списке сервера: «сейчас»
+# мало что говорит, если он отключился минуту назад, а сутки — разумный
+# горизонт для вопроса «кто вообще сидит на этом сервере».
+RECENT_WINDOW = timedelta(hours=24)
+
+
+async def users_by_node(session) -> dict:
+    """Кто на каком сервере: {номер сервера: [строка, …]}, сначала те, кто в сети.
+
+    Строка — {"user", "online_at", "online", "used_traffic"}. Считается по
+    трафику: сервер, через который у человека последним шли данные, и есть
+    тот, на котором он сидит. Один человек может быть сразу на нескольких
+    серверах — например, телефон на одном, ноутбук на другом.
+    """
+    from sqlalchemy import select
+
+    from app.models.access import UserNodeAccess
+    from app.models.user import User
+
+    since = datetime.utcnow() - RECENT_WINDOW
+    result = await session.execute(
+        select(UserNodeAccess, User)
+        .join(User, User.id == UserNodeAccess.user_id)
+        .where(UserNodeAccess.online_at >= since)
+    )
+    grouped: dict = {}
+    for access, user in result.all():
+        grouped.setdefault(access.node_id, []).append(
+            {
+                "user": user,
+                "online_at": access.online_at,
+                "online": is_online(access.online_at),
+                "used_traffic": access.used_traffic,
+            }
+        )
+    for rows in grouped.values():
+        rows.sort(key=lambda row: (not row["online"], -row["online_at"].timestamp(), row["user"].username))
+    return grouped
