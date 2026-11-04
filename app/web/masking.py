@@ -179,12 +179,17 @@ async def set_node_domain(
     inbound_id: int,
     node_id: int = Form(...),
     domain: str = Form(default=""),
+    back: str = Form(default=""),
+    reset: bool = Form(default=False),
     session: AsyncSession = Depends(get_session),
     admin: Admin = Depends(web_admin),
 ):
-    """Задать (или сбросить пустым значением) домен подключения на сервере."""
+    """Задать (или сбросить пустым значением) домен подключения на сервере.
+
+    Форма есть и здесь, и в «Подписке» — back возвращает туда, откуда пришли.
+    """
     inbound = await _get_reality(session, inbound_id)
-    value = masking.clean(domain)
+    value = "" if reset else masking.clean(domain)
     if value and not masking.is_valid(value):
         raise HTTPException(422, f"«{domain}» не похоже на имя сайта — нужно вроде www.example.com")
 
@@ -205,7 +210,14 @@ async def set_node_domain(
         commit=True,
     )
     trigger_sync()
+    if _is_local(back):
+        return RedirectResponse(back, status_code=status.HTTP_303_SEE_OTHER)
     return _redirect(f"inbound-{inbound_id}")
+
+
+def _is_local(target: str) -> bool:
+    """Только свои страницы: иначе форма стала бы открытым редиректом."""
+    return target.startswith("/") and not target.startswith("//") and "\\" not in target
 
 
 @router.post("/{inbound_id}/auto")

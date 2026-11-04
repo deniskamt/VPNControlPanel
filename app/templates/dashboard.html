@@ -61,6 +61,36 @@
   </div>
 </div>
 
+<div class="panel attention">
+  <header>
+    {% if issues %}Требует внимания · {{ issues | length }}{% else %}Всё в порядке{% endif %}
+    <span class="muted" style="font-weight:400">панель проверяет это сама, по своим данным</span>
+  </header>
+  {% if not issues %}
+    <div class="body muted">
+      Серверы отвечают, агенты свежие, у каждого сервера свой маскировочный домен,
+      конфликтов портов и сломанных строк подписки нет.
+    </div>
+  {% else %}
+    {% for issue in issues %}
+      <div class="issue {{ issue.level }}">
+        <div class="issue-text">
+          <b>{{ issue.title }}</b>
+          <div class="muted">{{ issue.detail }}</div>
+        </div>
+        {% if issue.post %}
+          <form class="inline" method="post" action="{{ issue.link }}"
+                data-confirm="Обновить агентов на всех устаревших серверах? Xray на каждом перезапустится, подключения оборвутся на несколько секунд.">
+            <button class="small primary" type="submit">{{ issue.action }}</button>
+          </form>
+        {% else %}
+          <a class="btn small" href="{{ issue.link }}">{{ issue.action }}</a>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+</div>
+
 <div class="panel">
   <header>Трафик по часам (24 ч)</header>
   <div class="body">

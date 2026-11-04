@@ -21,7 +21,7 @@ from app.models.enums import SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.models.user import User
-from app.services import links, settings_store, subscription_view
+from app.services import links, masking, settings_store, subscription_view
 from app.services import users as user_service
 from app.services.audit import log_action
 from app.services.worker import trigger_sync
@@ -94,6 +94,8 @@ async def subscription_page(
             "hidden": hidden,
             "securities": [item.value for item in SecurityType],
             "remark_tokens": REMARK_TOKENS,
+            "masking_domains": masking.ALL_DOMAINS,
+            "discouraged_domains": masking.DISCOURAGED,
             "options": await settings_store.get_all(session),
             "subscription_url": (
                 settings.subscription_url(user_service.subscription_token(user))

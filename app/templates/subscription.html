@@ -86,6 +86,9 @@
 {% endmacro %}
 
 {% block content %}
+<datalist id="masking-domains">
+  {% for domain in masking_domains %}<option value="{{ domain }}">{% endfor %}
+</datalist>
 <div class="page-head">
   <div>
     <h1>Подписка</h1>
@@ -93,6 +96,7 @@
   </div>
   <div class="actions">
     <a class="btn" href="#node-protocols">Протоколы на серверах</a>
+    <a class="btn" href="/masking">Маскировка по серверам</a>
     <a class="btn" href="/settings">Оформление подписки</a>
   </div>
 </div>
@@ -164,6 +168,15 @@
         <td class="nowrap">
           {{ entry.inbound.tag }}
           <div class="muted sub-line">{{ entry.network }} / {{ entry.security.value }}</div>
+          {% if entry.masking_domain %}
+            {# Маскировка этого сервера — по нажатию открывается «Настроить»,
+               где её и меняют. #}
+            <button type="button" class="domain-chip {{ 'warn' if entry.same_domain_on or entry.masking_domain in discouraged_domains else '' }}"
+                    data-toggle="#entry-{{ entry.key }}"
+                    title="Маскировочный домен на этом сервере — нажмите, чтобы сменить">
+              🎭 {{ entry.masking_domain }}
+            </button>
+          {% endif %}
         </td>
         <td class="mono nowrap">{{ entry.address }}:{{ entry.port }}</td>
         <td class="muted nowrap">{{ entry.source }}</td>
@@ -203,6 +216,42 @@
       </tr>
       <tr class="row-detail" id="entry-{{ entry.key }}" hidden>
         <td colspan="5">
+          {% if entry.masking_domain %}
+          <div class="mask-box">
+            <form method="post" action="/masking/{{ entry.inbound.id }}/node-domain" class="mask-form">
+              <input type="hidden" name="node_id" value="{{ entry.node.id }}">
+              <input type="hidden" name="back" value="/subscription?user_id={{ user.id }}#entry-{{ entry.key }}">
+              <label>Маскировочный домен «{{ entry.inbound.tag }}» на сервере {{ entry.node.name }}
+                <span class="muted">— для всех пользователей</span></label>
+              <div class="actions" style="flex-wrap:nowrap">
+                <input type="text" name="domain" list="masking-domains"
+                       value="{{ entry.masking_domain if entry.own_domain else '' }}"
+                       placeholder="{{ entry.masking_domain }} (общий у подключения)">
+                <button type="submit" class="small primary">Сменить</button>
+                {% if entry.own_domain %}
+                  <button type="submit" class="small" name="reset" value="true"
+                          title="Вернуть общий домен подключения">Сбросить</button>
+                {% endif %}
+              </div>
+            </form>
+            <div class="muted sub-line" style="margin-top:6px">
+              {% if entry.same_domain_on %}
+                <span class="warn-text">Тот же домен на {{ entry.same_domain_on | join(', ') }}</span> —
+                одна примета на все эти серверы, а за передним сервером nginx их не различит.
+              {% elif entry.masking_domain in discouraged_domains %}
+                <span class="warn-text">Домен из популярных гайдов</span> — вычисляется в первую очередь.
+              {% else %}
+                Свой у этого сервера — так и должно быть.
+              {% endif %}
+              {% if entry.host_sni and entry.host_sni != entry.masking_domain %}
+                <br><span class="warn-text">У этой строки свой SNI «{{ entry.host_sni }}»</span> — он
+                перекрывает маскировку: смените или очистите его в настройке строки ниже.
+              {% endif %}
+              Проверить, какой домен лучше от этого сервера, — в
+              <a href="/masking">подборе маскировки</a>.
+            </div>
+          </div>
+          {% endif %}
           {% if entry.host %}
             <form method="post" action="/subscription/hosts/{{ entry.host.id }}/update">
               <input type="hidden" name="user_id" value="{{ user.id }}">

@@ -7,13 +7,14 @@
 чтобы каждую строку можно было настроить.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 
 from app.models.enums import SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.models.user import User
+from app.services import masking
 from app.services.links import (
     _effective_security,
     build_link,
@@ -35,6 +36,12 @@ class Entry:
     network: str
     security: SecurityType
     link: Optional[str]
+    # Маскировка REALITY на этом сервере: домен, свой ли он у сервера и на
+    # каких ещё серверах этого подключения стоит тот же самый.
+    masking_domain: Optional[str] = None
+    own_domain: bool = False
+    same_domain_on: List[str] = field(default_factory=list)
+    host_sni: Optional[str] = None
 
     @property
     def source(self) -> str:
@@ -52,6 +59,18 @@ def _entry(
 ) -> Entry:
     address = (host.address if host and host.address else None) or node.address
     port = (host.port if host and host.port else None) or inbound.port
+
+    domain = own = None
+    same: List[str] = []
+    if inbound.security == SecurityType.reality:
+        domain = masking.domain_for(inbound.settings, node.id)
+        own = str(node.id) in masking.node_domains(inbound.settings)
+        same = sorted(
+            other.name
+            for other in inbound.nodes
+            if other.id != node.id and masking.domain_for(inbound.settings, other.id) == domain
+        )
+
     return Entry(
         node=node,
         inbound=inbound,
@@ -62,6 +81,10 @@ def _entry(
         network=inbound.network.value,
         security=_effective_security(inbound, host),
         link=build_link(user, inbound, node, host, remark=remark),
+        masking_domain=domain,
+        own_domain=bool(own),
+        same_domain_on=same,
+        host_sni=host.sni if host and host.sni else None,
     )
 
 

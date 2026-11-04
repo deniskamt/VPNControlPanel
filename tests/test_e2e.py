@@ -1099,3 +1099,66 @@ def test_nodes_page_shows_who_sits_on_which_server(client, auth, inbound):
     # На другом сервере этого человека нет.
     other = page.split('id="users-2"', 1)
     assert len(other) == 1 or "user_onnode" not in other[1].split('id="more-2"', 1)[0]
+
+
+def test_masking_domain_is_changed_right_from_the_subscription(client, auth, inbound):
+    """Домен сервера виден в строке подписки и меняется там же."""
+    page = client.get("/subscription").text
+    assert 'class="domain-chip' in page
+    assert "Маскировочный домен «VLESS-REALITY» на сервере NL-1" in page
+
+    user_id = re.search(r'<option value="(\d+)" selected>', page).group(1)
+    back = f"/subscription?user_id={user_id}#entry-1-1-0"
+    saved = client.post(
+        "/masking/1/node-domain",
+        data={"node_id": 1, "domain": "www.kone.com", "back": back},
+        follow_redirects=False,
+    )
+    # Возвращает туда же, откуда пришли, — к раскрытой строке.
+    assert saved.status_code == 303 and saved.headers["location"] == back
+    assert "🎭 www.kone.com" in client.get(back.split("#")[0]).text
+
+    # Сброс — отдельной кнопкой, без двух полей с одним именем.
+    client.post("/masking/1/node-domain",
+                data={"node_id": 1, "domain": "www.kone.com", "reset": "true"},
+                follow_redirects=False)
+    assert "🎭 www.kone.com" not in client.get(back.split("#")[0]).text
+
+    # Чужой адрес в back — не повод уводить администратора с панели.
+    away = client.post("/masking/1/node-domain",
+                       data={"node_id": 1, "domain": "", "back": "//evil.example/"},
+                       follow_redirects=False)
+    assert away.headers["location"].startswith("/masking")
+
+
+def test_dashboard_lists_what_needs_attention(client, auth, inbound):
+    """Поломки, которые раньше искались перебором команд, видны на обзоре."""
+    page = client.get("/").text
+    assert "Требует внимания" in page
+    # Ноды в тестах не отвечают — это ошибка, и она идёт первой.
+    assert "Серверы с ошибкой" in page
+    # Один домен на нескольких серверах и домен из гайдов.
+    assert "один домен www.microsoft.com" in page
+    assert "домен из популярных гайдов" in page
+
+    # Строка со своим SNI, которого REALITY не примет, — молча не работает.
+    client.post("/subscription/hosts/create",
+                data={"inbound_id": 1, "node_id": 1, "remark": "кривой SNI", "sni": "www.other.example"},
+                follow_redirects=False)
+    assert "SNI www.other.example не принимается сервером" in client.get("/").text
+
+    # Два подключения на одном порту одного сервера валят весь сервер.
+    client.post("/inbounds/quick",
+                data={"preset": "vless_reality_xhttp", "port": 443, "masking_domain": "www.kone.com",
+                      "node_ids": [1]},
+                follow_redirects=False)
+    assert "на одном порту 443" in client.get("/").text
+
+
+def test_all_outdated_agents_update_with_one_button(client, inbound):
+    page = client.get("/nodes").text
+    response = client.post("/nodes/update-agents", follow_redirects=False)
+    assert response.status_code == 303
+    # Агенты в тестах недоступны — ошибка записана в журнал, а не пятисотка.
+    assert "node.update_agent" in client.get("/logs").text
+    assert "Обновить агентов" in page or "агент устарел" not in page

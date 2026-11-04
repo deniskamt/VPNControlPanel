@@ -79,7 +79,15 @@
     <h1>Серверы</h1>
     <div class="sub">Ноды под управлением панели: {{ nodes | length }}</div>
   </div>
-  <button data-toggle="#add-node" class="primary">Добавить сервер</button>
+  <div class="actions">
+    {% if agent_outdated.values() | select | list %}
+    <form class="inline" method="post" action="/nodes/update-agents"
+          data-confirm="Обновить агентов на всех устаревших серверах до версии {{ agent_version }}? Xray на каждом перезапустится, подключения оборвутся на несколько секунд.">
+      <button class="btn" type="submit">Обновить агентов ({{ agent_outdated.values() | select | list | length }})</button>
+    </form>
+    {% endif %}
+    <button data-toggle="#add-node" class="primary">Добавить сервер</button>
+  </div>
 </div>
 
 <div class="panel" id="add-node" hidden>

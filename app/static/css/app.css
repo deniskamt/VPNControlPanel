@@ -609,3 +609,46 @@ input:focus, select:focus, textarea:focus {
 input, select, textarea {
   transition: border-color var(--dur-ui) ease, box-shadow var(--dur-ui) ease;
 }
+
+/* Маскировочный домен в строке подписки: видно сразу, нажимается — и
+   открывает «Настроить», где его меняют. */
+.domain-chip {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 8px;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .domain-chip:hover { color: var(--text); border-color: var(--accent); }
+}
+.domain-chip.warn { color: var(--warn); border-color: rgba(229,161,58,0.4); }
+.warn-text { color: var(--warn); }
+.mask-box {
+  padding: 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.02);
+}
+.mask-form input[type=text] { min-width: 0; flex: 1 1 260px; }
+
+/* «Требует внимания» на обзоре: красная полоса — у людей уже не работает,
+   жёлтая — сломается или вычислят. */
+.issue {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  border-left: 3px solid transparent;
+}
+.issue.err { border-left-color: var(--err); }
+.issue.warn { border-left-color: var(--warn); }
+.issue-text { flex: 1 1 auto; min-width: 0; }
+.issue-text .muted { font-size: 13px; margin-top: 2px; }
+.issue > form, .issue > .btn { flex: 0 0 auto; }

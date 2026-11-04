@@ -17,6 +17,7 @@ from app.models.inbound import Inbound
 from app.models.node import Node
 from app.models.usage import NodeUsage, SystemUsage
 from app.models.user import User
+from app.services import attention
 from app.web.templates import templates
 
 router = APIRouter()
@@ -182,6 +183,7 @@ async def dashboard(
             "nodes": nodes,
             "logs": logs,
             "NodeStatus": NodeStatus,
+            "issues": await attention.collect(session),
         },
     )
 

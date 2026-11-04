@@ -1,5 +1,6 @@
 """Управление серверами (нодами)."""
 
+import asyncio
 import json
 from typing import List, Optional
 
@@ -254,6 +255,62 @@ async def restart_node(
         commit=True,
     )
     await poll_node(session, node)
+    return _redirect()
+
+
+@router.post("/update-agents")
+async def update_all_agents(
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Обновить агента на всех серверах, где он устарел, — разом.
+
+    После обновления панели устаревают все агенты сразу, и кнопка на каждом
+    сервере по очереди превращалась в девять одинаковых нажатий.
+    """
+    source = read_source()
+    version = bundled_version(source)
+    nodes = [
+        node
+        for node in (await session.execute(select(Node).where(Node.is_enabled.is_(True))))
+        .scalars()
+        .all()
+        if is_outdated(node.agent_version, version)
+    ]
+
+    async def one(node: Node) -> Optional[str]:
+        try:
+            await NodeClient(node).update_agent(source, version)
+            return None
+        except NodeError as exc:
+            return str(exc)
+
+    errors = await asyncio.gather(*(one(node) for node in nodes))
+    failed = []
+    for node, error in zip(nodes, errors):
+        if error:
+            node.status = NodeStatus.error
+            node.message = error
+            failed.append(node.name)
+        else:
+            # Агент выйдет и поднимется через systemd — несколько секунд.
+            node.agent_version = version
+            node.status = NodeStatus.connecting
+            node.message = None
+
+    await log_action(
+        session,
+        action="node.update_agent",
+        actor=admin.username,
+        target="все серверы",
+        target_type="node",
+        level="error" if failed else "info",
+        message=(
+            f"обновлено до версии {version}: {len(nodes) - len(failed)} из {len(nodes)}"
+            + (f"; не вышло: {', '.join(failed)}" if failed else "")
+        ),
+    )
+    await session.commit()
     return _redirect()
 
 
