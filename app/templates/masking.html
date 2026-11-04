@@ -103,8 +103,8 @@
           <span class="muted">порт {{ plan.inbound.port }} · общий домен <span class="mono">{{ plan.shared }}</span></span>
         </div>
         <form class="inline" method="post" action="/masking/{{ plan.inbound.id }}/auto"
-              data-confirm="Раздать серверам «{{ plan.inbound.tag }}» разные домены по последней проверке? Клиенты получат новые ссылки при обновлении подписки.">
-          <button class="small primary" type="submit" {% if not probed_nodes %}disabled title="Сначала проверьте домены с серверов"{% endif %}>Раздать лучшие домены</button>
+              data-confirm="Раздать серверам «{{ plan.inbound.tag }}» разные домены? Клиенты получат новые ссылки при обновлении подписки.">
+          <button class="small primary" type="submit" title="По проверке с нод, а где её нет — из каталога, ближе к стране сервера">Раздать разные домены</button>
         </form>
       </div>
 

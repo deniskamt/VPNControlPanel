@@ -652,3 +652,11 @@ input, select, textarea {
 .issue-text { flex: 1 1 auto; min-width: 0; }
 .issue-text .muted { font-size: 13px; margin-top: 2px; }
 .issue > form, .issue > .btn { flex: 0 0 auto; }
+
+/* Домены всех серверов подключения в «Настроить». */
+.mask-table { width: 100%; }
+.mask-table td { padding: 4px 8px; border-bottom: none; }
+.mask-table tr.current td { background: var(--accent-soft); }
+.mask-table tr.current td:first-child { border-radius: 8px 0 0 8px; }
+.mask-table tr.current td:last-child { border-radius: 0 8px 8px 0; }
+.mask-table input[type=text] { min-width: 180px; }

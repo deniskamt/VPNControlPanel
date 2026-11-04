@@ -147,3 +147,28 @@ def test_wildcard_covers_exactly_one_label():
     pick = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pick)
     assert not pick.covers("a.b.example.com", ["*.example.com"])
+
+
+def test_catalog_assignment_is_distinct_and_close_to_the_server():
+    nodes = [SimpleNamespace(id=1, country="FI"), SimpleNamespace(id=2, country="DE"),
+             SimpleNamespace(id=3, country="FI"), SimpleNamespace(id=4, country="")]
+    chosen = masking.assign_from_catalog(nodes, taken=["www.kone.com"])
+
+    assert len(chosen) == 4 and len(set(chosen.values())) == 4
+    assert "www.kone.com" not in chosen.values()
+    north = next(g for g in masking.CATALOG if "FI" in g.countries).domains
+    germany = next(g for g in masking.CATALOG if "DE" in g.countries).domains
+    assert chosen[1] in north and chosen[3] in north and chosen[2] in germany
+    assert not set(chosen.values()) & masking.DISCOURAGED
+
+
+def test_catalog_assignment_keeps_working_own_domains():
+    """Свой неповторяющийся домен у сервера менять незачем."""
+    nodes = [SimpleNamespace(id=1, country="FI"), SimpleNamespace(id=2, country="FI"),
+             SimpleNamespace(id=3, country="FI")]
+    current = {masking.NODE_DOMAINS_KEY: {"1": "www.lovelive-anime.jp", "2": "www.x.jp", "3": "www.x.jp"}}
+    chosen = masking.assign_from_catalog(nodes, current=current)
+
+    assert chosen[1] == "www.lovelive-anime.jp"
+    # Совпадающие — разводятся.
+    assert chosen[2] != chosen[3]

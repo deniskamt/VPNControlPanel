@@ -220,22 +220,106 @@ def _is_local(target: str) -> bool:
     return target.startswith("/") and not target.startswith("//") and "\\" not in target
 
 
-@router.post("/{inbound_id}/auto")
-async def auto_assign(
+@router.post("/{inbound_id}/node-domains")
+async def set_node_domains(
     inbound_id: int,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     admin: Admin = Depends(web_admin),
 ):
-    """Раздать серверам подключения разные домены по последней проверке."""
+    """Задать домены сразу всем серверам подключения.
+
+    Поля формы — domain_<номер сервера>; пустое значение возвращает сервер
+    к общему домену подключения. Сначала проверяем всё, потом сохраняем:
+    одна опечатка не должна оставлять половину серверов изменёнными.
+    """
     inbound = await _get_reality(session, inbound_id)
-    node_ids = [node.id for node in inbound.nodes]
-    chosen = masking.assign_distinct(node_ids, _results_by_node())
-    if not chosen:
-        raise HTTPException(
-            409,
-            "Раздавать нечего: сначала нажмите «Проверить домены с серверов» — "
-            "выбор делается по задержке от каждого сервера",
+    form = await request.form()
+    allowed = {node.id for node in inbound.nodes}
+
+    wanted: Dict[str, str] = {}
+    for key, raw in form.items():
+        if not key.startswith("domain_") or not key[7:].isdigit():
+            continue
+        node_id = int(key[7:])
+        if node_id not in allowed:
+            continue
+        value = masking.clean(str(raw))
+        if value and not masking.is_valid(value):
+            raise HTTPException(
+                422, f"«{raw}» не похоже на имя сайта — нужно вроде www.example.com"
+            )
+        wanted[str(node_id)] = value
+
+    domains = masking.node_domains(inbound.settings)
+    for node_id, value in wanted.items():
+        if value:
+            domains[node_id] = value
+        else:
+            domains.pop(node_id, None)
+    _save_node_domains(inbound, domains)
+
+    await log_action(
+        session,
+        action="inbound.node_domain",
+        actor=admin.username,
+        target=inbound.tag,
+        target_type="inbound",
+        message=f"домены на {len(wanted)} серв.",
+        details={"domains": wanted},
+        commit=True,
+    )
+    trigger_sync()
+    back = str(form.get("back") or "")
+    if _is_local(back):
+        return RedirectResponse(back, status_code=status.HTTP_303_SEE_OTHER)
+    return _redirect(f"inbound-{inbound_id}")
+
+
+async def _taken_elsewhere(session: AsyncSession, inbound: Inbound) -> List[str]:
+    """Домены, которые уже носят другие подключения REALITY на своих серверах."""
+    taken: List[str] = []
+    for other in await _reality_inbounds(session):
+        if other.id == inbound.id:
+            continue
+        for node in other.nodes:
+            domain = masking.domain_for(other.settings, node.id)
+            if domain:
+                taken.append(domain)
+    return taken
+
+
+@router.post("/{inbound_id}/auto")
+async def auto_assign(
+    inbound_id: int,
+    back: str = Form(default=""),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Раздать серверам подключения разные домены.
+
+    Если с нод уже есть проверка — по задержке от каждого сервера. Для тех,
+    по кому проверки нет, — из каталога, ближе к стране сервера. Так кнопка
+    работает и до обновления агентов.
+    """
+    inbound = await _get_reality(session, inbound_id)
+    nodes = sorted(inbound.nodes, key=lambda node: (node.sort_order, node.id))
+    taken = await _taken_elsewhere(session, inbound)
+
+    probed = {
+        node_id: [item for item in results if item["domain"] not in taken]
+        for node_id, results in _results_by_node().items()
+    }
+    chosen = masking.assign_distinct([node.id for node in nodes], probed)
+    rest = [node for node in nodes if node.id not in chosen]
+    if rest:
+        chosen.update(
+            masking.assign_from_catalog(
+                rest, taken=list(taken) + list(chosen.values()), current=inbound.settings
+            )
         )
+    if not chosen:
+        raise HTTPException(409, "Подключение не поднято ни на одном сервере — раздавать некому")
 
     domains = masking.node_domains(inbound.settings)
     for node_id, domain in chosen.items():
@@ -248,10 +332,11 @@ async def auto_assign(
         actor=admin.username,
         target=inbound.tag,
         target_type="inbound",
-        message=f"разданы домены на {len(chosen)} серв.",
+        message=f"разданы разные домены на {len(chosen)} серв.",
         details={"chosen": {str(key): value for key, value in chosen.items()}},
         commit=True,
     )
     trigger_sync()
+    if _is_local(back):
+        return RedirectResponse(back, status_code=status.HTTP_303_SEE_OTHER)
     return _redirect(f"inbound-{inbound_id}")
-

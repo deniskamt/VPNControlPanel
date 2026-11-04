@@ -42,6 +42,9 @@ class Entry:
     own_domain: bool = False
     same_domain_on: List[str] = field(default_factory=list)
     host_sni: Optional[str] = None
+    # Все серверы этого подключения — чтобы в «Настроить» менять домены
+    # сразу всем: [{"node", "domain", "own", "duplicate"}].
+    mask_rows: List[dict] = field(default_factory=list)
 
     @property
     def source(self) -> str:
@@ -70,6 +73,20 @@ def _entry(
             for other in inbound.nodes
             if other.id != node.id and masking.domain_for(inbound.settings, other.id) == domain
         )
+        servers = sorted(inbound.nodes, key=lambda item: (item.sort_order, item.id))
+        dupes = masking.duplicates(inbound.settings, [item.id for item in servers])
+        mine = masking.node_domains(inbound.settings)
+        mask_rows = [
+            {
+                "node": item,
+                "domain": masking.domain_for(inbound.settings, item.id),
+                "own": mine.get(str(item.id), ""),
+                "duplicate": masking.domain_for(inbound.settings, item.id) in dupes,
+            }
+            for item in servers
+        ]
+    else:
+        mask_rows = []
 
     return Entry(
         node=node,
@@ -85,6 +102,7 @@ def _entry(
         own_domain=bool(own),
         same_domain_on=same,
         host_sni=host.sni if host and host.sni else None,
+        mask_rows=mask_rows,
     )
 
 

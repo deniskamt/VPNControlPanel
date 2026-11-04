@@ -28,6 +28,8 @@ class Group:
     note: str
     domains: Sequence[str]
     recommended: bool = True
+    # Страны нод, которым эта группа ближе всего (коды ISO, как у серверов).
+    countries: Sequence[str] = ()
 
 
 CATALOG: List[Group] = [
@@ -69,6 +71,7 @@ CATALOG: List[Group] = [
             "www.volvocars.com",
             "www.abb.com",
         ],
+        countries=("FI", "SE", "NO", "DK", "EE", "LV", "LT", "IS"),
     ),
     Group(
         "Германия и Центральная Европа",
@@ -85,6 +88,7 @@ CATALOG: List[Group] = [
             "www.otto.de",
             "www.mediamarkt.de",
         ],
+        countries=("DE", "PL", "CZ", "AT", "CH", "SK", "HU"),
     ),
     Group(
         "Нидерланды, Бельгия, Франция",
@@ -98,6 +102,7 @@ CATALOG: List[Group] = [
             "www.decathlon.com",
             "www.leroymerlin.fr",
         ],
+        countries=("NL", "BE", "FR", "LU", "GB", "IE", "ES", "PT", "IT"),
     ),
     Group(
         "Электроника и софт — годятся почти где угодно",
@@ -275,5 +280,45 @@ def assign_distinct(
             if item["domain"] not in taken:
                 chosen[node_id] = item["domain"]
                 taken.add(item["domain"])
+                break
+    return chosen
+
+
+def assign_from_catalog(
+    nodes: Sequence, taken: Iterable[str] = (), current: Optional[Dict] = None
+) -> Dict[int, str]:
+    """Каждому серверу — свой домен из каталога, без проверки с нод.
+
+    Сначала из группы, близкой к стране сервера (финской ноде — северные
+    компании, немецкой — немецкие), потом из остальных рекомендованных.
+    Домены не повторяются ни между серверами, ни с уже занятыми — например,
+    другими подключениями. Серверу, у которого свой домен уже есть и он ни с
+    кем не совпадает, его оставляем: менять работающее незачем.
+    """
+    used = set(taken)
+    chosen: Dict[int, str] = {}
+    own = node_domains(current)
+
+    # Свои непересекающиеся домены — сохраняем как есть.
+    counts: Dict[str, int] = {}
+    for node in nodes:
+        domain = own.get(str(node.id))
+        if domain:
+            counts[domain] = counts.get(domain, 0) + 1
+    for node in nodes:
+        domain = own.get(str(node.id))
+        if domain and counts[domain] == 1 and domain not in DISCOURAGED and domain not in used:
+            chosen[node.id] = domain
+            used.add(domain)
+
+    for node in nodes:
+        if node.id in chosen:
+            continue
+        country = (getattr(node, "country", "") or "").upper()
+        near = [d for g in CATALOG if g.recommended and country in g.countries for d in g.domains]
+        for domain in near + [d for d in RECOMMENDED if d not in near]:
+            if domain not in used:
+                chosen[node.id] = domain
+                used.add(domain)
                 break
     return chosen

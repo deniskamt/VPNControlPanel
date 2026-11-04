@@ -1017,8 +1017,12 @@ def test_masking_page_sets_a_domain_per_server(client, auth, inbound):
                       follow_redirects=False)
     assert bad.status_code == 422
 
-    # Раздавать без проверки нечем — и панель так и говорит.
-    assert client.post("/masking/1/auto", follow_redirects=False).status_code == 409
+    # Без проверки с нод домены берутся из каталога — разные у всех серверов.
+    assert client.post("/masking/1/auto", follow_redirects=False).status_code == 303
+    plan = client.get("/masking").text.split('id="inbound-1"', 1)[1].split('id="inbound-', 1)[0]
+    assert "стоит сразу на" not in plan, "после раздачи домены не должны совпадать"
+    own = re.findall(r'name="domain" list="masking-domains" value="([^"]+)"', plan)
+    assert len(own) >= 2 and len(own) == len(set(own)), own
 
     # Проверка с нод, которые не отвечают, не роняет страницу: ошибка видна.
     probed = client.post("/masking/probe", data={"extra": "www.example.jp", "only_extra": "true"},
@@ -1026,8 +1030,10 @@ def test_masking_page_sets_a_domain_per_server(client, auth, inbound):
     assert probed.status_code == 303
     assert "агент не отвечает" in client.get("/masking").text
 
-    # Сброс — пустое поле.
-    client.post("/masking/1/node-domain", data={"node_id": 1, "domain": ""}, follow_redirects=False)
+    # Сброс — пустые поля у всех серверов: дальше проверки ждут общий домен.
+    page = client.get("/subscription").text
+    fields = set(re.findall(r'name="(domain_\d+)"', page))
+    client.post("/masking/1/node-domains", data={key: "" for key in fields}, follow_redirects=False)
     links = client.get("/api/user/user_mask", headers=auth).json()["links"]
     assert not any("sni=www.kone.com" in link for link in links)
 
@@ -1105,7 +1111,7 @@ def test_masking_domain_is_changed_right_from_the_subscription(client, auth, inb
     """Домен сервера виден в строке подписки и меняется там же."""
     page = client.get("/subscription").text
     assert 'class="domain-chip' in page
-    assert "Маскировочный домен «VLESS-REALITY» на сервере NL-1" in page
+    assert "Маскировка «VLESS-REALITY» по серверам" in page
 
     user_id = re.search(r'<option value="(\d+)" selected>', page).group(1)
     back = f"/subscription?user_id={user_id}#entry-1-1-0"
@@ -1117,6 +1123,7 @@ def test_masking_domain_is_changed_right_from_the_subscription(client, auth, inb
     # Возвращает туда же, откуда пришли, — к раскрытой строке.
     assert saved.status_code == 303 and saved.headers["location"] == back
     assert "🎭 www.kone.com" in client.get(back.split("#")[0]).text
+    assert 'name="domain_1" list="masking-domains"\n                             value="www.kone.com"' in client.get(back.split("#")[0]).text
 
     # Сброс — отдельной кнопкой, без двух полей с одним именем.
     client.post("/masking/1/node-domain",
@@ -1162,3 +1169,34 @@ def test_all_outdated_agents_update_with_one_button(client, inbound):
     # Агенты в тестах недоступны — ошибка записана в журнал, а не пятисотка.
     assert "node.update_agent" in client.get("/logs").text
     assert "Обновить агентов" in page or "агент устарел" not in page
+
+
+def test_every_server_gets_its_own_domain_from_one_form(client, auth, inbound):
+    """В «Настроить» подписки — домены всех серверов подключения разом."""
+    page = client.get("/subscription").text
+    fields = sorted(set(re.findall(r'name="domain_(\d+)"', page)), key=int)
+    assert len(fields) >= 2, "в блоке должны быть все серверы подключения"
+
+    domains = {f"domain_{node_id}": f"www.test{node_id}.example" for node_id in fields}
+    saved = client.post("/masking/1/node-domains",
+                        data={**domains, "back": "/subscription#x"}, follow_redirects=False)
+    assert saved.status_code == 303 and saved.headers["location"] == "/subscription#x"
+
+    client.post("/api/user", headers=auth,
+                json={"username": "user_bulk", "proxies": {"vless": {}},
+                      "inbounds": {"vless": ["VLESS-REALITY"]}, "expire": 0})
+    links = client.get("/api/user/user_bulk", headers=auth).json()["links"]
+    for node_id in fields:
+        assert any(f"sni=www.test{node_id}.example" in link for link in links), links
+
+    # Одна опечатка — и ничего не сохраняется, а не половина.
+    broken = {**domains, f"domain_{fields[0]}": "www.changed.example", f"domain_{fields[1]}": "не домен"}
+    assert client.post("/masking/1/node-domains", data=broken,
+                       follow_redirects=False).status_code == 422
+    links = client.get("/api/user/user_bulk", headers=auth).json()["links"]
+    assert not any("www.changed.example" in link for link in links)
+
+    # Пустые поля — назад к общему домену.
+    client.post("/masking/1/node-domains", data={key: "" for key in domains}, follow_redirects=False)
+    links = client.get("/api/user/user_bulk", headers=auth).json()["links"]
+    assert not any(".example&" in link or ".example#" in link for link in links if "test" in link)

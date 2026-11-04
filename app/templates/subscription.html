@@ -218,38 +218,54 @@
         <td colspan="5">
           {% if entry.masking_domain %}
           <div class="mask-box">
-            <form method="post" action="/masking/{{ entry.inbound.id }}/node-domain" class="mask-form">
-              <input type="hidden" name="node_id" value="{{ entry.node.id }}">
+            {# Домены всех серверов подключения — в одном месте: у каждого
+               сервера должен быть свой, иначе это одна примета на все. #}
+            <div class="actions" style="justify-content:space-between;margin-bottom:8px">
+              <b>Маскировка «{{ entry.inbound.tag }}» по серверам
+                <span class="muted" style="font-weight:400">— для всех пользователей</span></b>
+              <form class="inline" method="post" action="/masking/{{ entry.inbound.id }}/auto"
+                    data-confirm="Подставить каждому серверу «{{ entry.inbound.tag }}» свой домен? Свои неповторяющиеся домены останутся как есть. Клиенты получат новые ссылки при обновлении подписки.">
+                <input type="hidden" name="back" value="/subscription?user_id={{ user.id }}#entry-{{ entry.key }}">
+                <button type="submit" class="small" title="По проверке с нод, а где её нет — из каталога, ближе к стране сервера">Подставить разные</button>
+              </form>
+            </div>
+            <form method="post" action="/masking/{{ entry.inbound.id }}/node-domains">
               <input type="hidden" name="back" value="/subscription?user_id={{ user.id }}#entry-{{ entry.key }}">
-              <label>Маскировочный домен «{{ entry.inbound.tag }}» на сервере {{ entry.node.name }}
-                <span class="muted">— для всех пользователей</span></label>
-              <div class="actions" style="flex-wrap:nowrap">
-                <input type="text" name="domain" list="masking-domains"
-                       value="{{ entry.masking_domain if entry.own_domain else '' }}"
-                       placeholder="{{ entry.masking_domain }} (общий у подключения)">
-                <button type="submit" class="small primary">Сменить</button>
-                {% if entry.own_domain %}
-                  <button type="submit" class="small" name="reset" value="true"
-                          title="Вернуть общий домен подключения">Сбросить</button>
-                {% endif %}
+              <table class="mask-table">
+                <tbody>
+                {% for row in entry.mask_rows %}
+                  <tr class="{{ 'current' if row.node.id == entry.node.id else '' }}">
+                    <td class="nowrap">
+                      {{ row.node.name | flags }}
+                      {% if row.node.id == entry.node.id %}<span class="muted">· эта строка</span>{% endif %}
+                    </td>
+                    <td class="nowrap mono">
+                      <span class="{{ 'warn-text' if row.duplicate or row.domain in discouraged_domains else 'muted' }}"
+                            title="{% if row.duplicate %}тот же домен стоит на другом сервере{% elif row.domain in discouraged_domains %}домен из популярных гайдов{% else %}сейчас{% endif %}">
+                        {{ row.domain or '—' }}{% if row.duplicate %} ⚠{% endif %}</span>
+                    </td>
+                    <td style="width:100%">
+                      <input type="text" name="domain_{{ row.node.id }}" list="masking-domains"
+                             value="{{ row.own }}" placeholder="общий: {{ entry.inbound.settings.get('serverNames', ['—'])[0] }}">
+                    </td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+              <div class="actions" style="margin-top:10px">
+                <button type="submit" class="small primary">Сохранить домены</button>
+                <span class="muted sub-line">
+                  Пустое поле — общий домен подключения. ⚠ — тот же домен на другом сервере.
+                  Лучший домен от каждого сервера покажет <a href="/masking">проверка с нод</a>.
+                </span>
               </div>
             </form>
-            <div class="muted sub-line" style="margin-top:6px">
-              {% if entry.same_domain_on %}
-                <span class="warn-text">Тот же домен на {{ entry.same_domain_on | join(', ') }}</span> —
-                одна примета на все эти серверы, а за передним сервером nginx их не различит.
-              {% elif entry.masking_domain in discouraged_domains %}
-                <span class="warn-text">Домен из популярных гайдов</span> — вычисляется в первую очередь.
-              {% else %}
-                Свой у этого сервера — так и должно быть.
-              {% endif %}
-              {% if entry.host_sni and entry.host_sni != entry.masking_domain %}
-                <br><span class="warn-text">У этой строки свой SNI «{{ entry.host_sni }}»</span> — он
+            {% if entry.host_sni and entry.host_sni != entry.masking_domain %}
+              <div class="sub-line" style="margin-top:8px">
+                <span class="warn-text">У этой строки свой SNI «{{ entry.host_sni }}»</span> — он
                 перекрывает маскировку: смените или очистите его в настройке строки ниже.
-              {% endif %}
-              Проверить, какой домен лучше от этого сервера, — в
-              <a href="/masking">подборе маскировки</a>.
-            </div>
+              </div>
+            {% endif %}
           </div>
           {% endif %}
           {% if entry.host %}
