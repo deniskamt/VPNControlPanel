@@ -6,6 +6,7 @@
 лежат те же «хосты», что и раньше, но теперь их не нужно собирать в голове.
 """
 
+from types import SimpleNamespace
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
@@ -21,7 +22,7 @@ from app.models.enums import SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.models.user import User
-from app.services import links, masking, settings_store, subscription_view
+from app.services import links, masking, ports, settings_store, subscription_view
 from app.services import users as user_service
 from app.services.audit import log_action
 from app.services.worker import trigger_sync
@@ -399,6 +400,7 @@ async def save_node_inbounds(
 
     changes: List[str] = []
     removed = added = 0
+    pending = []
     for item in nodes:
         was = {inbound.id for inbound in item.inbounds}
         # За пределами показанных столбцов оставляем всё как было.
@@ -410,13 +412,40 @@ async def save_node_inbounds(
         if was == now:
             continue
         by_id = {inbound.id: inbound for inbound in item.inbounds} | inbounds
-        item.inbounds = [by_id[inbound_id] for inbound_id in sorted(now)]
+
+        # Новое подключение не должно делить порт с уже стоящими: Xray это
+        # не отвергает, а раздаёт соединения вслепую (см. services/ports.py).
+        # Проверяем до того, как что-то поменяли, — отказ не оставит
+        # половину серверов изменёнными.
+        for inbound_id in sorted(now - was):
+            newcomer = by_id[inbound_id]
+            if not newcomer.is_enabled:
+                continue
+            others = SimpleNamespace(
+                name=item.name,
+                agent_port=item.agent_port,
+                inbounds=[by_id[other] for other in now if other != inbound_id],
+            )
+            found = ports.clashes(newcomer.port, newcomer.protocol, newcomer.listen, [others])
+            if found:
+                raise HTTPException(
+                    422,
+                    f"«{newcomer.tag}» нельзя поднять на {item.name}: порт {newcomer.port} "
+                    f"занят — {ports.describe(found)}. Два подключения на одном порту "
+                    "Xray делит вслепую, и половина соединений обрывается. Перенесите "
+                    "одно из них на другой порт в «Подключениях».",
+                )
+        pending.append((item, [by_id[inbound_id] for inbound_id in sorted(now)]))
         for inbound_id in sorted(was - now):
             changes.append(f"{item.name}: убрано «{by_id[inbound_id].tag}»")
             removed += 1
         for inbound_id in sorted(now - was):
             changes.append(f"{item.name}: добавлено «{by_id[inbound_id].tag}»")
             added += 1
+
+    # Всё проверено — теперь применяем.
+    for item, chosen in pending:
+        item.inbounds = chosen
 
     if changes:
         # В сообщении — итог: на девяти серверах перечисление не влезало

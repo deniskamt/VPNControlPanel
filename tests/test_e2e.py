@@ -1154,12 +1154,49 @@ def test_dashboard_lists_what_needs_attention(client, auth, inbound):
                 follow_redirects=False)
     assert "SNI www.other.example не принимается сервером" in client.get("/").text
 
-    # Два подключения на одном порту одного сервера валят весь сервер.
+    # Общий порт двух подключений проверен на живом Xray: он не падает, а
+    # делит порт, и половина соединений уходит не туда. Такого не собрать...
+    refused = client.post("/inbounds/quick",
+                          data={"preset": "vless_reality_xhttp", "port": 443,
+                                "masking_domain": "www.kone.com", "node_ids": [1]},
+                          follow_redirects=False)
+    assert refused.status_code == 422 and "уже занят" in refused.text
+
+    # ...а без явного порта шаблон сам берёт свободный, а не свой 443.
     client.post("/inbounds/quick",
-                data={"preset": "vless_reality_xhttp", "port": 443, "masking_domain": "www.kone.com",
+                data={"preset": "vless_reality_xhttp", "masking_domain": "www.kone.com",
                       "node_ids": [1]},
                 follow_redirects=False)
-    assert "на одном порту 443" in client.get("/").text
+    tags = client.get("/inbounds").text
+    xhttp_port = int(re.search(r"VLESS-REALITY-XHTTP[\s\S]{0,800}?(\d{4,5})", tags).group(1))
+    assert xhttp_port != 443
+
+    # Уже собранный конфликт (до этой версии панели) находится и чинится кнопкой.
+    import asyncio
+
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from app.core.config import settings
+    from app.models.inbound import Inbound
+
+    async def set_port(tag: str, port: int) -> int:
+        engine = create_async_engine(settings.DATABASE_URL)
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            inbound = (await session.execute(select(Inbound).where(Inbound.tag == tag))).scalar_one()
+            inbound.port = port
+            await session.commit()
+            inbound_id = inbound.id
+        await engine.dispose()
+        return inbound_id
+
+    xhttp_id = asyncio.run(set_port("VLESS-REALITY-XHTTP", 443))
+    page = client.get("/").text
+    assert "делят порт 443" in page and "половина подключений" in page
+    moved = client.post(f"/inbounds/{xhttp_id}/move-port", data={"back": "/"},
+                        follow_redirects=False)
+    assert moved.status_code == 303 and moved.headers["location"] == "/"
+    assert "делят порт 443" not in client.get("/").text
 
 
 def test_all_outdated_agents_update_with_one_button(client, inbound):
@@ -1200,3 +1237,77 @@ def test_every_server_gets_its_own_domain_from_one_form(client, auth, inbound):
     client.post("/masking/1/node-domains", data={key: "" for key in domains}, follow_redirects=False)
     links = client.get("/api/user/user_bulk", headers=auth).json()["links"]
     assert not any(".example&" in link or ".example#" in link for link in links if "test" in link)
+
+
+def test_shared_port_cannot_be_built_through_other_doors(client, inbound):
+    """Ни правкой подключения, ни таблицей протоколов общий порт не собрать."""
+    page = client.get("/inbounds").text
+    xhttp_id = re.search(r'/inbounds/(\d+)/update"[\s\S]{0,400}?VLESS-REALITY-XHTTP|VLESS-REALITY-XHTTP[\s\S]{0,4000}?/inbounds/(\d+)/update', page)
+    inbound_id = next(group for group in xhttp_id.groups() if group)
+
+    import json
+    edit = client.post(f"/inbounds/{inbound_id}/update", data={
+        "tag": "VLESS-REALITY-XHTTP", "protocol": "vless", "port": 443, "network": "xhttp",
+        "security": "reality", "listen": "0.0.0.0", "settings": json.dumps({}), "node_ids": [1],
+    }, follow_redirects=False)
+    assert edit.status_code == 422 and "уже занят" in edit.text
+
+    # Таблица: на новом сервере порт XHTTP уже занят другим подключением —
+    # поставить туда XHTTP галочкой нельзя.
+    sub = client.get("/subscription").text
+    header = re.search(r'name="column" value="%s">\s*VLESS-REALITY-XHTTP\s*<div[^>]*>\s*vless:(\d+)' % inbound_id, sub)
+    xhttp_port = int(header.group(1))
+    client.post("/nodes/create", data={
+        "name": "SE-ports", "address": "se.example.com", "agent_host": "127.0.0.1",
+        "agent_port": 9, "agent_token": "t", "country": "SE", "inbound_ids": [],
+    }, follow_redirects=False)
+    sub = client.get("/subscription").text
+    new_node = re.search(r'name="node" value="(\d+)">\s*SE-ports', sub).group(1)
+    # Новый сервер «как все» получил XHTTP — снимаем его оттуда таблицей и
+    # ставим на тот же порт другое подключение.
+    client.post(f"/subscription/nodes/{new_node}/inbounds/{inbound_id}/detach", data={},
+                follow_redirects=False)
+    blocker = client.post("/inbounds/quick", data={
+        "preset": "vless_reality", "port": xhttp_port, "masking_domain": "www.abb.com",
+        "node_ids": [new_node],
+    }, follow_redirects=False)
+    assert blocker.status_code == 303, blocker.text
+
+    sub = client.get("/subscription").text
+    nodes = sorted(set(re.findall(r'name="node" value="(\d+)"', sub)), key=int)
+    columns = sorted(set(re.findall(r'name="column" value="(\d+)"', sub)), key=int)
+    current = re.findall(r'name="pair" value="(\d+:\d+)"\s*checked', sub)
+    refused = client.post("/subscription/nodes/inbounds",
+                          data={"pair": current + [f"{new_node}:{inbound_id}"], "node": nodes,
+                                "column": columns},
+                          follow_redirects=False)
+    assert refused.status_code == 422 and "нельзя поднять" in refused.text
+
+
+
+def test_new_server_does_not_take_two_inbounds_on_one_port(client, inbound):
+    """Сервер «как все» не должен собирать общий порт из чужих подключений."""
+    import asyncio
+
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from app.core.config import settings
+    from app.models.inbound import Inbound
+    from app.models.node import Node
+
+    client.post("/nodes/create", data={
+        "name": "FI-clash", "address": "fi2.example.com", "agent_host": "127.0.0.1",
+        "agent_port": 9, "agent_token": "t", "country": "FI",
+    }, follow_redirects=False)
+
+    async def ports_on_new_node():
+        engine = create_async_engine(settings.DATABASE_URL)
+        async with AsyncSession(engine) as session:
+            node = (await session.execute(select(Node).where(Node.name == "FI-clash"))).scalar_one()
+            taken = [(i.port, i.protocol.value == "hysteria2") for i in node.inbounds if i.is_enabled]
+        await engine.dispose()
+        return taken
+
+    taken = asyncio.run(ports_on_new_node())
+    assert taken and len(taken) == len(set(taken)), taken

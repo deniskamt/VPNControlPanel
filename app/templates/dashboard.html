@@ -80,7 +80,8 @@
         </div>
         {% if issue.post %}
           <form class="inline" method="post" action="{{ issue.link }}"
-                data-confirm="Обновить агентов на всех устаревших серверах? Xray на каждом перезапустится, подключения оборвутся на несколько секунд.">
+                data-confirm="{{ issue.confirm or (issue.title ~ ' — ' ~ issue.action ~ '?') }}">
+            {% for name, value in issue.fields.items() %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
             <button class="small primary" type="submit">{{ issue.action }}</button>
           </form>
         {% else %}

@@ -8,16 +8,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import NodeStatus, ProxyType, SecurityType
+from app.models.enums import NodeStatus, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
-from app.services import masking
+from app.services import masking, ports
 from app.services.agent_source import bundled_version, is_outdated
 
 
@@ -30,15 +30,14 @@ class Issue:
     action: str
     # Действие выполняется сразу (POST), а не ведёт на страницу.
     post: bool = False
+    # Поля формы для POST-действия.
+    fields: Dict[str, object] = field(default_factory=dict)
+    # Своё подтверждение для POST-действия.
+    confirm: str = ""
 
 
 def _names(nodes: List[Node]) -> str:
     return ", ".join(node.name for node in nodes)
-
-
-def _transport(inbound: Inbound) -> str:
-    """Hysteria2 слушает UDP, всё остальное — TCP: на одном порту они не мешают."""
-    return "udp" if inbound.protocol == ProxyType.hysteria2 else "tcp"
 
 
 async def collect(session: AsyncSession) -> List[Issue]:
@@ -71,6 +70,8 @@ async def collect(session: AsyncSession) -> List[Issue]:
             f"В панели версия {version}. Без обновления не работают новые "
             "возможности — например, проверка маскировочных доменов.",
             "/nodes/update-agents", "Обновить все", post=True,
+            confirm="Обновить агентов на всех устаревших серверах? Xray на каждом "
+            "перезапустится, подключения оборвутся на несколько секунд.",
         ))
 
     empty = [node for node in enabled_nodes if not any(i.is_enabled for i in node.inbounds)]
@@ -92,24 +93,45 @@ async def collect(session: AsyncSession) -> List[Issue]:
             "/subscription#node-protocols", "Протоколы на серверах",
         ))
 
-    # Два подключения на одном порту одного сервера: Xray не примет конфиг
-    # целиком, и падает весь сервер, а не одно подключение.
+    # Два подключения на одном порту одного сервера. Xray это НЕ отвергает:
+    # открывает порт дважды, и ядро раздаёт соединения между подключениями
+    # вслепую — половина уходит не туда и обрывается. Ошибки при этом нет
+    # нигде, поэтому без этой проверки такое не найти. Пара подключений
+    # обычно делит порт сразу на многих серверах — показываем её одной строкой.
+    shared: Dict[Tuple[int, int], List[Node]] = {}
+    pair_of: Dict[Tuple[int, int], Tuple[Inbound, Inbound]] = {}
     for node in enabled_nodes:
-        seen: Dict[Tuple[int, str], Inbound] = {}
-        for inbound in sorted(node.inbounds, key=lambda i: i.id):
-            if not inbound.is_enabled:
-                continue
-            key = (inbound.port, _transport(inbound))
-            if key in seen:
+        for first, second in ports.node_conflicts(node):
+            key = (first.id, second.id)
+            shared.setdefault(key, []).append(node)
+            pair_of[key] = (first, second)
+    for key, where in shared.items():
+        first, second = pair_of[key]
+        target = ports.free_port(second.protocol, second.listen, list(second.nodes), exclude_id=second.id)
+        issues.append(Issue(
+            "err",
+            f"«{first.tag}» и «{second.tag}» делят порт {first.port} на {len(where)} серв.",
+            f"{_names(where)}. Xray не выдаёт ошибки, а раздаёт соединения между ними "
+            "вслепую: примерно половина подключений у людей обрывается."
+            + (f" Перенос «{second.tag}» на {target}: ключи и настройки останутся, "
+               "ссылки обновятся вместе с подпиской; если на серверах включён файрвол, "
+               f"откройте порт: ufw allow {target}/tcp." if target else ""),
+            f"/inbounds/{second.id}/move-port", f"Перенести на {target}" if target else "К подключениям",
+            post=bool(target),
+            fields={"port": target, "back": "/"} if target else {},
+        ))
+
+    # Порт агента панели занят подключением: панель теряет связь с нодой.
+    for node in enabled_nodes:
+        for inbound in node.inbounds:
+            if inbound.is_enabled and ports.transport(inbound.protocol) == "tcp" and inbound.port == node.agent_port:
                 issues.append(Issue(
                     "err",
-                    f"{node.name}: «{seen[key].tag}» и «{inbound.tag}» на одном порту {inbound.port}",
-                    "Xray не поднимет конфиг с двумя подключениями на одном порту — "
-                    "не работает весь сервер, а не одно подключение.",
-                    "/inbounds", "К подключениям",
+                    f"{node.name}: «{inbound.tag}» на порту агента {node.agent_port}",
+                    "Порт занят агентом панели — подключение и управление сервером мешают друг другу.",
+                    f"/inbounds/{inbound.id}/move-port", "Перенести на свободный",
+                    post=True, fields={"back": "/"},
                 ))
-            else:
-                seen[key] = inbound
 
     # --- Маскировка REALITY --------------------------------------------------
     node_names = {node.id: node.name for node in nodes}

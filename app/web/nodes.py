@@ -23,7 +23,7 @@ from app.services.keys import generate_agent_token
 from app.services.node_client import NodeClient, NodeError
 from app.services.node_manager import load_users, poll_node, sync_node
 from app.services.xray_config import build_node_config, config_hash
-from app.services import presence
+from app.services import ports, presence
 from app.web.templates import templates
 
 router = APIRouter(prefix="/nodes")
@@ -38,6 +38,24 @@ async def _get_node(session: AsyncSession, node_id: int) -> Node:
 
 def _redirect() -> RedirectResponse:
     return RedirectResponse("/nodes", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _clash_message(dropped, kept, agent_port) -> str:
+    parts = []
+    for item in dropped:
+        rival = next(
+            (other for other in kept if other.port == item.port
+             and ports.transport(other.protocol) == ports.transport(item.protocol)),
+            None,
+        )
+        reason = f"«{rival.tag}»" if rival else f"порт агента {agent_port}"
+        parts.append(f"«{item.tag}» на порту {item.port} — там уже {reason}")
+    return (
+        "На одном сервере два подключения не могут делить порт: Xray не отвергает "
+        "такое, а раздаёт соединения вслепую, и половина обрывается. "
+        + "; ".join(parts)
+        + ". Снимите одно или перенесите его на другой порт в «Подключениях»."
+    )
 
 
 @router.get("", response_class=HTMLResponse)
@@ -121,9 +139,27 @@ async def create_node(
         query = select(Inbound).where(Inbound.id.in_(inbound_ids))
     else:
         query = select(Inbound).where(Inbound.is_enabled.is_(True))
-    node.inbounds = list((await session.execute(query)).scalars().all())
+    chosen = list((await session.execute(query)).scalars().all())
+    # Два подключения на одном порту Xray делит вслепую — половина соединений
+    # уходит не туда (services/ports.py). Выбранное руками — отказ с
+    # объяснением; выбранное «по умолчанию» — без лишних, с записью в журнал.
+    kept, dropped = ports.split_clashing(chosen, agent_port)
+    if dropped and inbound_ids:
+        raise HTTPException(422, _clash_message(dropped, kept, agent_port))
+    node.inbounds = kept
 
     session.add(node)
+    if dropped:
+        await log_action(
+            session,
+            action="node.create",
+            actor=admin.username,
+            target=node.name,
+            target_type="node",
+            level="warning",
+            message="не подняты из-за занятого порта: "
+            + ", ".join(f"«{item.tag}» ({item.port})" for item in dropped),
+        )
     await log_action(
         session,
         action="node.create",
@@ -170,7 +206,16 @@ async def update_node(
         node.agent_token = agent_token.strip()
 
     result = await session.execute(select(Inbound).where(Inbound.id.in_(inbound_ids or [])))
-    node.inbounds = list(result.scalars().all())
+    chosen = list(result.scalars().all())
+    # Отказываем только за новый конфликт: уже существующий (собранный до
+    # этой проверки) не должен мешать, скажем, переименовать сервер — его
+    # покажет «Требует внимания» с кнопкой переноса.
+    before = {item.id for item in node.inbounds}
+    kept, dropped = ports.split_clashing(chosen, node.agent_port)
+    fresh = [item for item in dropped if item.id not in before]
+    if fresh:
+        raise HTTPException(422, _clash_message(fresh, kept, node.agent_port))
+    node.inbounds = chosen
     # Адрес/набор inbound'ов изменились — конфиг надо перезалить.
     node.config_hash = None
 

@@ -1,11 +1,12 @@
 """Настройка входящих подключений Xray (inbound'ов) и их хостов."""
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import web_admin
@@ -14,7 +15,7 @@ from app.models.admin import Admin
 from app.models.enums import NetworkType, ProxyType, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
-from app.services import masking, xray_import
+from app.services import masking, ports, xray_import
 from app.services import presets as preset_service
 from app.services import users as user_service
 from app.services.audit import log_action
@@ -52,6 +53,49 @@ async def _nodes_or_all(session: AsyncSession, node_ids: List[int]) -> List[Node
     else:
         query = select(Node).where(Node.is_enabled.is_(True))
     return list((await session.execute(query)).scalars().all())
+
+
+async def _nodes_with_inbounds(session: AsyncSession, node_ids: List[int]) -> List[Node]:
+    """Серверы вместе с их подключениями — для проверки портов.
+
+    Серверы, подтянутые через подключение, своих подключений ещё не знают, а
+    подгрузить их «по требованию» в асинхронной сессии нельзя. populate_existing
+    дозагружает и те объекты, что уже лежат в сессии.
+    """
+    if not node_ids:
+        return []
+    result = await session.execute(
+        select(Node)
+        .where(Node.id.in_(node_ids))
+        .options(selectinload(Node.inbounds))
+        .execution_options(populate_existing=True)
+    )
+    return list(result.scalars().all())
+
+
+def _ensure_free_port(
+    port: int,
+    protocol: ProxyType,
+    listen: Optional[str],
+    nodes: List[Node],
+    exclude_id: Optional[int] = None,
+) -> None:
+    """Отказать, если порт на этих серверах уже занят другим подключением.
+
+    Xray такое не отвергает, а молча делит порт: половина соединений уходит
+    не в то подключение и обрывается (см. services/ports.py).
+    """
+    found = ports.clashes(port, protocol, listen, nodes, exclude_id)
+    if not found:
+        return
+    suggestion = ports.free_port(protocol, listen, nodes, exclude_id)
+    hint = f" Свободный на всех этих серверах: {suggestion}." if suggestion else ""
+    raise HTTPException(
+        422,
+        f"Порт {port} уже занят — {ports.describe(found)}. Два подключения на одном "
+        "порту Xray не отвергает, а делит: половина соединений уходит не туда и "
+        f"обрывается.{hint}",
+    )
 
 
 async def _get_inbound(session: AsyncSession, inbound_id: int) -> Inbound:
@@ -139,11 +183,26 @@ async def quick_create(
         for settings in (await session.execute(select(Inbound.settings))).scalars().all()
     ]
 
+    # Серверы выбираем до порта: свободен ли он, зависит от того, где
+    # подключение поднимется. Порт не задан — берём порт шаблона, а если он
+    # занят, первый свободный: оба шаблона REALITY по умолчанию хотят 443.
+    targets = await _nodes_with_inbounds(
+        session, [node.id for node in await _nodes_or_all(session, node_ids)]
+    )
+    if port:
+        _ensure_free_port(port, template.protocol, "0.0.0.0", targets)
+        chosen_port = port
+    else:
+        chosen_port = (
+            ports.free_port(template.protocol, "0.0.0.0", targets, prefer=template.default_port)
+            or template.default_port
+        )
+
     inbound = Inbound(
         tag=tag,
         remark=template.title,
         protocol=template.protocol,
-        port=port or template.default_port,
+        port=chosen_port,
         network=template.network,
         security=template.security,
         listen="0.0.0.0",
@@ -160,7 +219,7 @@ async def quick_create(
 
     # По умолчанию поднимаем подключение на всех серверах: держать его
     # включённым, но ни к одному серверу не привязанным, смысла нет.
-    inbound.nodes = list(await _nodes_or_all(session, node_ids))
+    inbound.nodes = targets
 
     session.add(inbound)
     await session.flush()
@@ -199,6 +258,11 @@ async def create_inbound(
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Inbound с таким tag уже есть")
 
+    targets = await _nodes_with_inbounds(
+        session, [node.id for node in await _nodes_or_all(session, node_ids)]
+    )
+    _ensure_free_port(port, ProxyType(protocol), listen, targets)
+
     inbound = Inbound(
         tag=tag.strip(),
         remark=remark.strip() or None,
@@ -211,7 +275,7 @@ async def create_inbound(
     )
     # Как и в шаблонах: не выбрали серверы — значит, на все включённые.
     # Иначе подключение создаётся «в никуда» и не доезжает ни до кого.
-    inbound.nodes = list(await _nodes_or_all(session, node_ids))
+    inbound.nodes = targets
 
     session.add(inbound)
     await session.flush()
@@ -312,7 +376,11 @@ async def import_inbound(
         security=parsed["security"],
         settings=parsed["settings"],
     )
-    inbound.nodes = list(await _nodes_or_all(session, node_ids))
+    targets = await _nodes_with_inbounds(
+        session, [node.id for node in await _nodes_or_all(session, node_ids)]
+    )
+    _ensure_free_port(parsed["port"], parsed["protocol"], parsed["listen"], targets)
+    inbound.nodes = targets
 
     session.add(inbound)
     await session.flush()
@@ -349,6 +417,9 @@ async def update_inbound(
     admin: Admin = Depends(web_admin),
 ):
     inbound = await _get_inbound(session, inbound_id)
+    targets = await _nodes_with_inbounds(session, list(node_ids or []))
+    _ensure_free_port(port, ProxyType(protocol), listen, targets, exclude_id=inbound.id)
+
     inbound.tag = tag.strip()
     inbound.remark = remark.strip() or None
     inbound.protocol = ProxyType(protocol)
@@ -358,8 +429,7 @@ async def update_inbound(
     inbound.listen = listen.strip() or "0.0.0.0"
     inbound.settings = _parse_settings(settings_raw)
 
-    result = await session.execute(select(Node).where(Node.id.in_(node_ids or [])))
-    inbound.nodes = list(result.scalars().all())
+    inbound.nodes = targets
 
     await log_action(
         session,
@@ -372,6 +442,44 @@ async def update_inbound(
 
     trigger_sync()
     return _redirect()
+
+
+@router.post("/{inbound_id}/move-port")
+async def move_port(
+    inbound_id: int,
+    port: int = Form(default=0),
+    back: str = Form(default="/inbounds"),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Перенести подключение на порт, свободный на всех его серверах.
+
+    Лекарство от общего порта: ссылки у людей обновятся вместе с подпиской,
+    ключи и настройки остаются прежними.
+    """
+    inbound = await _get_inbound(session, inbound_id)
+    nodes = await _nodes_with_inbounds(session, [node.id for node in inbound.nodes])
+    if port:
+        _ensure_free_port(port, inbound.protocol, inbound.listen, nodes, exclude_id=inbound.id)
+    else:
+        port = ports.free_port(inbound.protocol, inbound.listen, nodes, exclude_id=inbound.id) or 0
+        if not port:
+            raise HTTPException(409, "Свободного порта на всех серверах подключения не нашлось")
+
+    previous = inbound.port
+    inbound.port = port
+    await log_action(
+        session,
+        action="inbound.move_port",
+        actor=admin.username,
+        target=inbound.tag,
+        target_type="inbound",
+        message=f"порт {previous} → {port}",
+        commit=True,
+    )
+    trigger_sync()
+    target = back if back.startswith("/") and not back.startswith("//") else "/inbounds"
+    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/{inbound_id}/toggle")
