@@ -15,7 +15,7 @@ from app.models.admin import Admin
 from app.models.enums import NetworkType, ProxyType, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
-from app.services import masking, ports, xray_import
+from app.services import masking, ports, xhttp, xray_import
 from app.services import presets as preset_service
 from app.services import users as user_service
 from app.services.audit import log_action
@@ -475,6 +475,41 @@ async def move_port(
         target=inbound.tag,
         target_type="inbound",
         message=f"порт {previous} → {port}",
+        commit=True,
+    )
+    trigger_sync()
+    target = back if back.startswith("/") and not back.startswith("//") else "/inbounds"
+    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{inbound_id}/xhttp-profile")
+async def set_xhttp_profile(
+    inbound_id: int,
+    profile: str = Form(default="low_handshake"),
+    back: str = Form(default="/inbounds"),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Сменить профиль соединений XHTTP: «мало рукопожатий» или «дробление».
+
+    Сервер при этом всегда слушает auto, так что подписки, выданные до
+    смены, продолжают работать, пока клиент их не обновит.
+    """
+    inbound = await _get_inbound(session, inbound_id)
+    if inbound.network != NetworkType.xhttp:
+        raise HTTPException(422, "Профиль соединений есть только у XHTTP")
+    if profile not in xhttp.PROFILES:
+        raise HTTPException(422, "Неизвестный профиль")
+
+    before = xhttp.profile_of(inbound.settings or {})
+    inbound.settings = xhttp.apply_profile(inbound.settings or {}, profile)
+    await log_action(
+        session,
+        action="inbound.xhttp_profile",
+        actor=admin.username,
+        target=inbound.tag,
+        target_type="inbound",
+        message=f"{xhttp.PROFILES[before]} → {xhttp.PROFILES[profile]}",
         commit=True,
     )
     trigger_sync()

@@ -358,13 +358,12 @@ def build_settings(
         if sni:
             settings["host"] = sni.strip()
         if preset.network == NetworkType.xhttp:
-            # packet-up, а не stream-one и тем более не auto. Под REALITY
-            # «auto» выбирает stream-one — один длинный поток, который
-            # зависает после ~16 КБ ровно так же, как обычный VLESS. Ради
-            # этого XHTTP и берут: аплинк уходит отдельными запросами, а
-            # даунлинк периодически пересоздаётся.
-            settings["mode"] = "packet-up"
-            settings["extra"] = xhttp.anti_freeze_settings()
+            # Профиль «мало рукопожатий» (см. services/xhttp.py): дробление
+            # на сотни соединений само попадает под правило ТСПУ о частых
+            # рукопожатиях. За CDN — по-прежнему дробление: CDN не держит
+            # длинные ответы, и рукопожатия там идут к CDN, а не к серверу.
+            profile = "fragment" if preset.security != SecurityType.reality else "low_handshake"
+            settings.update(xhttp.apply_profile({}, profile))
             if obfuscate:
                 settings.update(xhttp.generate_obfuscation())
     elif preset.network == NetworkType.grpc:

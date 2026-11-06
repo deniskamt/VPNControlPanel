@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import socket
 import time
 from typing import Any, Dict, List
 
@@ -19,10 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import web_admin
 from app.core.database import get_session
 from app.models.admin import Admin
-from app.models.enums import SecurityType
+from app.models.enums import NetworkType, SecurityType
 from app.models.inbound import Inbound
 from app.models.node import Node
-from app.services import masking
+from app.services import masking, xhttp
 from app.services.audit import log_action
 from app.services.node_client import NodeClient, NodeError
 from app.services.worker import trigger_sync
@@ -32,6 +33,8 @@ router = APIRouter(prefix="/masking")
 
 # Последняя проверка: {номер сервера: {"at": время, "results": [...], "error": ...}}
 _LAST_PROBE: Dict[int, Dict[str, Any]] = {}
+# Последний поиск соседей: {номер сервера: {"at", "subnet", "results", "error"}}
+_LAST_NEIGHBORS: Dict[int, Dict[str, Any]] = {}
 
 
 def _redirect(anchor: str = "") -> RedirectResponse:
@@ -80,6 +83,12 @@ async def masking_page(
             {
                 "inbound": inbound,
                 "shared": masking.domain_for(inbound.settings, None) or "—",
+                # Профиль соединений XHTTP: сколько TLS-рукопожатий видит ТСПУ.
+                "xhttp_profile": (
+                    xhttp.profile_of(inbound.settings or {})
+                    if inbound.network == NetworkType.xhttp
+                    else None
+                ),
                 "rows": [
                     {
                         "node": node,
@@ -107,12 +116,111 @@ async def masking_page(
             "all_domains": masking.ALL_DOMAINS,
             "discouraged": masking.DISCOURAGED,
             "probed_nodes": probed_nodes,
+            "neighbors": [
+                {
+                    "node": node,
+                    "found": _LAST_NEIGHBORS[node.id],
+                    "usable": masking.usable_neighbors(_LAST_NEIGHBORS[node.id].get("results", [])),
+                    "reality": [
+                        inbound for inbound in node.inbounds
+                        if inbound.security == SecurityType.reality and inbound.is_enabled
+                    ],
+                }
+                for node in nodes
+                if node.id in _LAST_NEIGHBORS
+            ],
             "probe": _LAST_PROBE,
             "summary": masking.summarize(_results_by_node()),
             "node_names": {node.id: node.name for node in nodes},
             "now": time.time(),
+            "xhttp_profiles": xhttp.PROFILES,
         },
     )
+
+
+async def _public_ipv4(address: str) -> str:
+    """Адрес ноды как IPv4 — соседей ищут по её /24."""
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await loop.getaddrinfo(address, 443, family=socket.AF_INET)
+    except OSError:
+        return ""
+    return infos[0][4][0] if infos else ""
+
+
+@router.post("/neighbors")
+async def find_neighbors(
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Попросить каждую ноду найти маскировочные домены среди соседей по /24.
+
+    Пара «IP хостера + SNI сайта из того же дата-центра» выглядит обычным
+    трафиком — главный совет отчётов осени 2026 (так же работает RealiTLScanner).
+    """
+    nodes = list(
+        (await session.execute(select(Node).where(Node.is_enabled.is_(True))))
+        .scalars()
+        .all()
+    )
+
+    async def ask(node: Node) -> None:
+        ip = await _public_ipv4(node.address)
+        if not ip:
+            _LAST_NEIGHBORS[node.id] = {"at": time.time(), "results": [],
+                                        "error": f"не удалось узнать IPv4 по адресу {node.address}"}
+            return
+        try:
+            answer = await NodeClient(node).neighbors(ip)
+            _LAST_NEIGHBORS[node.id] = {"at": time.time(), **answer}
+        except NodeError as exc:
+            _LAST_NEIGHBORS[node.id] = {"at": time.time(), "results": [], "error": str(exc)}
+
+    await asyncio.gather(*(ask(node) for node in nodes))
+    await log_action(
+        session,
+        action="masking.neighbors",
+        actor=admin.username,
+        target="серверы",
+        target_type="node",
+        message=f"поиск соседей на {len(nodes)} серв.",
+        commit=True,
+    )
+    return _redirect("neighbors")
+
+
+@router.post("/use-neighbor")
+async def use_neighbor(
+    node_id: int = Form(...),
+    domain: str = Form(...),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Поставить соседа маскировкой всем подключениям REALITY этого сервера."""
+    value = masking.clean(domain)
+    if not masking.is_valid(value):
+        raise HTTPException(422, "Это не имя сайта")
+    node = await session.get(Node, node_id)
+    if node is None:
+        raise HTTPException(404, "Сервер не найден")
+    changed = []
+    for inbound in await _reality_inbounds(session):
+        if any(item.id == node_id for item in inbound.nodes):
+            domains = masking.node_domains(inbound.settings)
+            domains[str(node_id)] = value
+            _save_node_domains(inbound, domains)
+            changed.append(inbound.tag)
+    await log_action(
+        session,
+        action="inbound.node_domain",
+        actor=admin.username,
+        target=node.name,
+        target_type="node",
+        message=f"сосед {value} → {', '.join(changed) or 'нет подключений REALITY'}",
+        commit=True,
+    )
+    trigger_sync()
+    return _redirect("neighbors")
 
 
 @router.post("/probe")
@@ -310,7 +418,20 @@ async def auto_assign(
         node_id: [item for item in results if item["domain"] not in taken]
         for node_id, results in _results_by_node().items()
     }
-    chosen = masking.assign_distinct([node.id for node in nodes], probed)
+    neighbors = {
+        node_id: [item for item in found.get("results", []) if item["domain"] not in taken]
+        for node_id, found in _LAST_NEIGHBORS.items()
+    }
+    # Сначала соседи по подсети — самый правдоподобный вариант, потом
+    # проверка с нод, потом каталог.
+    chosen = masking.assign_from_neighbors([node.id for node in nodes], neighbors, taken)
+    rest_ids = [node.id for node in nodes if node.id not in chosen]
+    chosen.update(
+        masking.assign_distinct(
+            rest_ids,
+            {nid: [i for i in res if i["domain"] not in chosen.values()] for nid, res in probed.items()},
+        )
+    )
     rest = [node for node in nodes if node.id not in chosen]
     if rest:
         chosen.update(

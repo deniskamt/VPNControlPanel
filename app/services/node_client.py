@@ -146,3 +146,30 @@ class NodeClient:
                 "Обновите его кнопкой «Обновить» в разделе «Серверы»"
             ),
         )
+
+    async def neighbors(self, ip: str) -> Dict[str, Any]:
+        """Найти маскировочные домены среди соседей ноды по /24."""
+        return await self._request(
+            "POST",
+            "/neighbors",
+            json={"ip": ip},
+            # Своя /24 на 443 и проверка найденных имён — до минуты-двух.
+            timeout=max(self.timeout, 150),
+            missing_hint=(
+                "агент на этой ноде старее версии 6 и не умеет искать соседей. "
+                "Обновите его кнопкой «Обновить агентов» в разделе «Серверы»"
+            ),
+        )
+
+    async def update_xray(self, version: str) -> Dict[str, Any]:
+        """Поставить на ноду другую версию ядра Xray — с проверкой и откатом."""
+        return await self._request(
+            "POST",
+            "/update-xray",
+            json={"version": version},
+            timeout=max(self.timeout, 180),
+            missing_hint=(
+                "агент на этой ноде старее версии 6 и не умеет обновлять Xray. "
+                "Сначала обновите агента кнопкой «Обновить агентов»"
+            ),
+        )

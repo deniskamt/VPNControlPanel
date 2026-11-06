@@ -447,10 +447,10 @@ def test_obfuscated_inbound_reaches_both_subscriptions(client, auth, inbound):
     ]
     assert xhttp_profiles, "маскированное подключение обязано быть в JSON-подписке"
     block = xhttp_profiles[0]["outbounds"][0]["streamSettings"]["xhttpSettings"]
-    assert block["mode"] == "packet-up"
+    assert block["mode"] == "stream-one"
     assert block["xPaddingMethod"] == "tokenish"
-    # Дробление соединений должно доехать вместе с маскировкой.
-    assert block["extra"]["scStreamUpServerSecs"]
+    # Профиль соединений должен доехать вместе с маскировкой.
+    assert block["extra"]["xmux"]["maxConnections"] == 2
 
 
 def test_grant_all_button_hands_out_an_older_inbound(client, auth, inbound):
@@ -1311,3 +1311,57 @@ def test_new_server_does_not_take_two_inbounds_on_one_port(client, inbound):
 
     taken = asyncio.run(ports_on_new_node())
     assert taken and len(taken) == len(set(taken)), taken
+
+
+def test_autumn_2026_masking_issues_are_shown_and_fixed(client, auth, inbound):
+    """Старый профиль XHTTP и выделяемый ТСПУ отпечаток видны на обзоре и чинятся."""
+    import asyncio
+
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from app.core.config import settings
+    from app.models.inbound import Inbound
+    from app.services import xhttp
+
+    async def make_old(tag: str) -> int:
+        engine = create_async_engine(settings.DATABASE_URL)
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            item = (await session.execute(select(Inbound).where(Inbound.tag == tag))).scalar_one()
+            old = dict(item.settings)
+            old.pop("clientMode", None)
+            old["mode"] = "packet-up"
+            old["extra"] = xhttp.anti_freeze_settings()
+            old["fingerprint"] = "chrome"
+            item.settings = old
+            await session.commit()
+            inbound_id = item.id
+        await engine.dispose()
+        return inbound_id
+
+    inbound_id = asyncio.run(make_old("VLESS-REALITY-XHTTP"))
+    page = client.get("/").text
+    assert "XHTTP на старом профиле «дробление»" in page
+    assert "отпечаток TLS «chrome»" in page
+
+    moved = client.post(f"/inbounds/{inbound_id}/xhttp-profile",
+                        data={"profile": "low_handshake", "back": "/"}, follow_redirects=False)
+    assert moved.status_code == 303 and moved.headers["location"] == "/"
+    assert "старом профиле" not in client.get("/").text
+    # Переключатель в подборе маскировки показывает новый профиль.
+    assert 'value="low_handshake" selected' in client.get("/masking").text
+
+
+def test_neighbours_and_core_update_survive_unreachable_agents(client, inbound):
+    """Ноды в тестах не отвечают — страница и журнал говорят об этом, без пятисоток."""
+    found = client.post("/masking/neighbors", follow_redirects=False)
+    assert found.status_code == 303
+    page = client.get("/masking").text
+    assert "Соседи по подсети" in page and "агент не отвечает" in page
+
+    used = client.post("/masking/use-neighbor", data={"node_id": 1, "domain": "shop.neighbour.fi"},
+                       follow_redirects=False)
+    assert used.status_code == 303
+    assert "shop.neighbour.fi" in client.get("/masking").text
+
+    assert client.post("/nodes/update-xray", follow_redirects=False).status_code == 303

@@ -322,3 +322,29 @@ def assign_from_catalog(
                 used.add(domain)
                 break
     return chosen
+
+
+# --- Соседи по подсети ------------------------------------------------------------
+
+def usable_neighbors(results: Sequence[Dict]) -> List[Dict]:
+    """Годные соседи: TLS 1.3, HTTP/2, сертификат и DNS в той же подсети."""
+    return [
+        item for item in results
+        if item.get("ok") and item.get("same_subnet") and item["domain"] not in DISCOURAGED
+    ]
+
+
+def assign_from_neighbors(
+    node_ids: Sequence[int], neighbors_by_node: Dict[int, List[Dict]], taken: Iterable[str] = ()
+) -> Dict[int, str]:
+    """Каждому серверу — свой сосед по подсети с наименьшей задержкой."""
+    used = set(taken)
+    chosen: Dict[int, str] = {}
+    for node_id in node_ids:
+        for item in sorted(usable_neighbors(neighbors_by_node.get(node_id, [])),
+                           key=lambda r: (r.get("ms") or 10**6, r["domain"])):
+            if item["domain"] not in used:
+                chosen[node_id] = item["domain"]
+                used.add(item["domain"])
+                break
+    return chosen

@@ -23,7 +23,7 @@ from app.services.keys import generate_agent_token
 from app.services.node_client import NodeClient, NodeError
 from app.services.node_manager import load_users, poll_node, sync_node
 from app.services.xray_config import build_node_config, config_hash
-from app.services import ports, presence
+from app.services import ports, presence, xray_version
 from app.web.templates import templates
 
 router = APIRouter(prefix="/nodes")
@@ -300,6 +300,55 @@ async def restart_node(
         commit=True,
     )
     await poll_node(session, node)
+    return _redirect()
+
+
+@router.post("/update-xray")
+async def update_all_xray(
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Поставить рекомендуемое ядро Xray на все серверы, где оно старее.
+
+    Агент сам скачивает ядро, проверяет им текущий конфиг и откатывается,
+    если новое не поднялось, — нода без Xray не останется.
+    """
+    target = xray_version.RECOMMENDED
+    nodes = [
+        node
+        for node in (await session.execute(select(Node).where(Node.is_enabled.is_(True))))
+        .scalars()
+        .all()
+        if xray_version.is_outdated(node.xray_version)
+    ]
+
+    async def one(node: Node):
+        try:
+            return await NodeClient(node).update_xray(target)
+        except NodeError as exc:
+            return exc
+
+    answers = await asyncio.gather(*(one(node) for node in nodes))
+    failed = []
+    for node, answer in zip(nodes, answers):
+        if isinstance(answer, NodeError):
+            failed.append(f"{node.name}: {answer}")
+        else:
+            node.xray_version = answer.get("xray_version") or node.xray_version
+
+    await log_action(
+        session,
+        action="node.update_xray",
+        actor=admin.username,
+        target="все серверы",
+        target_type="node",
+        level="error" if failed else "info",
+        message=(
+            f"Xray {target}: {len(nodes) - len(failed)} из {len(nodes)}"
+            + (f"; не вышло — {'; '.join(failed)}" if failed else "")
+        ),
+    )
+    await session.commit()
     return _redirect()
 
 

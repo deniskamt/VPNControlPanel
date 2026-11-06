@@ -32,7 +32,7 @@ def _stream_settings(inbound: Inbound, host: Optional[Host], address: str) -> Di
     stream: Dict[str, Any] = {"network": inbound.network.value, "security": security.value}
 
     if inbound.network == NetworkType.xhttp:
-        stream["xhttpSettings"] = xhttp.transport_settings(opts)
+        stream["xhttpSettings"] = xhttp.transport_settings(opts, for_client=True)
     elif inbound.network == NetworkType.ws:
         ws: Dict[str, Any] = {"path": opts.get("path", "/")}
         if opts.get("host"):

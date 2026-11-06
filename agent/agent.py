@@ -21,6 +21,11 @@ from __future__ import annotations
 
 import concurrent.futures
 import hmac
+import ipaddress
+import platform
+import shutil
+import tempfile
+import zipfile
 import json
 import os
 import re
@@ -39,7 +44,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 
 # Версия агента. Увеличивается при каждом изменении этого файла: панель
 # сравнивает её со своей и показывает, на каких нодах агент устарел.
-AGENT_VERSION = 5
+AGENT_VERSION = 6
 
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")
 AGENT_HOST = os.getenv("AGENT_HOST", "0.0.0.0")
@@ -843,6 +848,146 @@ def probe(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
         results = list(pool.map(probe_domain, domains))
     return {"results": results}
+
+
+# --- Соседи по подсети ---------------------------------------------------------
+#
+# Самый правдоподобный маскировочный домен — сайт, который живёт в том же
+# дата-центре, что и нода: пара «IP хостера + SNI его соседа» выглядит
+# обычным трафиком, а пара «IP хостера + SNI корпорации с CDN» — нет.
+# Так подбирает домены RealiTLScanner, и это главный совет отчётов осени 2026.
+# Скан бережный: только порт 443 своей /24, одно соединение на адрес.
+
+NEIGHBOR_CONNECT_TIMEOUT = 1.5
+NEIGHBOR_WORKERS = 32
+NEIGHBOR_NAMES_LIMIT = 40
+
+
+def _neighbor_names(ip: str) -> List[str]:
+    """Имена из сертификата соседа — если он отдаёт настоящий TLS 1.3."""
+    try:
+        raw = socket.create_connection((ip, 443), timeout=NEIGHBOR_CONNECT_TIMEOUT)
+    except OSError:
+        return []
+    context = ssl.create_default_context()
+    # Имени мы не знаем — его и ищем. Цепочку при этом проверяем: соседи с
+    # самоподписанным сертификатом для маскировки не годятся.
+    context.check_hostname = False
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+    context.set_alpn_protocols(["h2", "http/1.1"])
+    try:
+        with raw, context.wrap_socket(raw, server_hostname=None) as tls:
+            tls.settimeout(PROBE_TIMEOUT)
+            if tls.selected_alpn_protocol() != "h2":
+                return []
+            names = _certificate_names(tls.getpeercert())
+    except (OSError, ssl.SSLError, ValueError):
+        return []
+    return [name.lower() for name in names if not name.startswith("*.") and _HOSTNAME_RE.match(name.lower())]
+
+
+@app.post("/neighbors", dependencies=[Depends(require_token)])
+def neighbors(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Найти маскировочные домены среди соседей ноды по /24."""
+    try:
+        own = ipaddress.IPv4Address(str(payload.get("ip") or ""))
+    except ipaddress.AddressValueError:
+        raise HTTPException(400, "нужен IPv4-адрес ноды") from None
+    if not own.is_global:
+        raise HTTPException(400, "адрес ноды не публичный — соседей искать негде")
+    subnet = ipaddress.IPv4Network(f"{own}/24", strict=False)
+    hosts = [str(ip) for ip in subnet.hosts() if ip != own]
+
+    found: Dict[str, str] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=NEIGHBOR_WORKERS) as pool:
+        for ip, names in zip(hosts, pool.map(_neighbor_names, hosts)):
+            for name in names:
+                found.setdefault(name, ip)
+    names = list(found)[:NEIGHBOR_NAMES_LIMIT]
+
+    def check(name: str) -> Dict[str, Any]:
+        result = probe_domain(name)
+        result["neighbor_ip"] = found[name]
+        try:
+            resolved = {info[4][0] for info in socket.getaddrinfo(name, 443, socket.AF_INET)}
+        except OSError:
+            resolved = set()
+        # Домен годится как сосед, только если и по DNS он ведёт в эту же
+        # подсеть: иначе нода будет ходить за ним через полмира.
+        result["same_subnet"] = any(ipaddress.IPv4Address(ip) in subnet for ip in resolved)
+        return result
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(check, names))
+    results.sort(key=lambda r: (not (r["ok"] and r["same_subnet"]), r.get("ms") or 10**6))
+    return {"subnet": str(subnet), "scanned": len(hosts), "results": results}
+
+
+# --- Обновление Xray -------------------------------------------------------------
+
+_XRAY_ASSETS = {
+    "x86_64": "Xray-linux-64.zip", "amd64": "Xray-linux-64.zip",
+    "aarch64": "Xray-linux-arm64-v8a.zip", "arm64": "Xray-linux-arm64-v8a.zip",
+    "armv7l": "Xray-linux-arm32-v7a.zip",
+}
+
+
+@app.post("/update-xray", dependencies=[Depends(require_token)])
+def update_xray(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Поставить другую версию ядра Xray — с проверкой и откатом.
+
+    Новое ядро сначала проверяет текущий конфиг; заменяется оно только если
+    конфиг принят, а если после перезапуска не поднялось — возвращается
+    прежнее. Нода не должна остаться без Xray из-за обновления.
+    """
+    version = str(payload.get("version") or "")
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", version):
+        raise HTTPException(400, "версия вида v26.10.21")
+    asset = _XRAY_ASSETS.get(platform.machine().lower())
+    if not asset:
+        raise HTTPException(400, f"неизвестная архитектура {platform.machine()}")
+    url = f"https://github.com/XTLS/Xray-core/releases/download/{version}/{asset}"
+
+    before = xray.version()
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / "xray.zip"
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response, open(archive, "wb") as out:
+                shutil.copyfileobj(response, out)
+            with zipfile.ZipFile(archive) as bundle:
+                bundle.extract("xray", tmp)
+        except Exception as exc:  # noqa: BLE001 — любая беда со скачиванием
+            raise HTTPException(502, f"не удалось скачать {url}: {exc}") from exc
+        fresh = Path(tmp) / "xray"
+        fresh.chmod(0o755)
+
+        if XRAY_CONFIG.exists():
+            check = subprocess.run(
+                [str(fresh), "run", "-test", "-c", str(XRAY_CONFIG)],
+                capture_output=True, text=True, timeout=60,
+            )
+            if check.returncode != 0:
+                tail = _meaningful_output((check.stdout or "") + (check.stderr or ""))
+                raise HTTPException(400, f"Xray {version} не принял текущий конфиг: {tail}")
+
+        target = Path(XRAY_BIN)
+        backup = target.with_name(target.name + ".bak")
+        if target.exists():
+            shutil.copy2(target, backup)
+        # Через временный файл и rename: занятый работающим процессом
+        # бинарник напрямую не перезаписать.
+        staged = target.with_name(target.name + ".new")
+        shutil.copy2(fresh, staged)
+        os.replace(staged, target)
+
+    xray.restart()
+    if not xray.running:
+        reason = xray.last_error or "Xray не запустился"
+        if backup.exists():
+            os.replace(backup, target)
+            xray.restart()
+        raise HTTPException(400, f"Xray {version} не запустился, возвращена прежняя версия: {reason}")
+    return {"ok": True, "previous": before, "xray_version": xray.version()}
 
 
 def main() -> None:

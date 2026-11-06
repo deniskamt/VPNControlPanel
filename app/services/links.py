@@ -68,8 +68,10 @@ def _transport_params(
         if header_host:
             params["host"] = header_host
         if network == NetworkType.xhttp:
-            if opts.get("mode"):
-                params["mode"] = opts["mode"]
+            # Режим клиенту — из профиля; сервер при этом слушает auto.
+            mode = opts.get("clientMode") or opts.get("mode")
+            if mode:
+                params["mode"] = mode
             # Всё, для чего нет своего query-параметра, едет в extra — туда
             # клиент на Xray-core кладёт содержимое как есть в xhttpSettings.
             # Это и дробление соединений (scMaxEachPostBytes, xmux и прочее),

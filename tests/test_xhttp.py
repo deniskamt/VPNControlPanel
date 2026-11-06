@@ -42,20 +42,35 @@ def make_user(inbounds):
     )
 
 
-def test_xhttp_splits_connections_instead_of_one_long_stream():
-    """Под REALITY «auto» выбирает stream-one — тот самый длинный поток,
-    который зависает после ~16 КБ. Значит, режим надо задавать явно."""
-    for key in ("vless_reality_xhttp", "vless_xhttp_cdn"):
-        settings = preset_service.build_settings(preset_service.PRESETS_BY_KEY[key])
-        assert settings["mode"] == "packet-up", key
+def test_reality_xhttp_keeps_tls_handshakes_rare():
+    """Дробление на стенде давало рукопожатие каждые ~2,6 с — то, за что ТСПУ
+    осенью 2026 морозит соединения. Под REALITY — мало долгих соединений."""
+    settings = preset_service.build_settings(preset_service.PRESETS_BY_KEY["vless_reality_xhttp"])
+    assert settings["mode"] == "auto"
+    assert settings["clientMode"] == "stream-one"
+    xmux = settings["extra"]["xmux"]
+    assert xmux["maxConnections"] == 2 and xmux["cMaxReuseTimes"] == 0
+    # Все поля xmux заданы: одно указанное поле обнуляет остальные.
+    assert set(xmux) >= {"maxConcurrency", "maxConnections", "cMaxReuseTimes",
+                         "hMaxRequestTimes", "hMaxReusableSecs", "hKeepAlivePeriod"}
 
-        extra = settings["extra"]
-        # Ни одно соединение не должно нести много: ограничен размер POST'а,
-        # даунлинк пересоздаётся, соединение переиспользуется ограниченно.
-        assert extra["scMaxEachPostBytes"]
-        assert extra["scStreamUpServerSecs"]
-        assert extra["xmux"]["cMaxReuseTimes"]
-        assert extra["xmux"]["hMaxRequestTimes"]
+
+def test_cdn_xhttp_still_splits_connections():
+    """За CDN рукопожатия идут к CDN, а длинные ответы он режет — там дробление."""
+    settings = preset_service.build_settings(preset_service.PRESETS_BY_KEY["vless_xhttp_cdn"])
+    assert settings["clientMode"] == "packet-up"
+    assert settings["extra"]["scMaxEachPostBytes"] and settings["extra"]["scStreamUpServerSecs"]
+
+
+def test_server_accepts_both_profiles_during_the_switch():
+    """Сервер с жёстким режимом отвергает чужой (на стенде 0 из 60) — поэтому
+    при смене профиля он слушает auto, и старые подписки не отваливаются."""
+    for profile in ("fragment", "low_handshake"):
+        assert xhttp.apply_profile({"path": "/x"}, profile)["mode"] == "auto"
+    old = {"mode": "packet-up", "extra": xhttp.anti_freeze_settings(), "path": "/x"}
+    assert xhttp.profile_of(old) == "fragment"
+    switched = xhttp.apply_profile(old, "low_handshake")
+    assert xhttp.profile_of(switched) == "low_handshake" and switched["path"] == "/x"
 
 
 @pytest.mark.parametrize("_", range(20))
@@ -99,7 +114,8 @@ def test_transport_settings_carry_obfuscation_to_the_core():
 
     for key in xhttp.OBFUSCATION_KEYS:
         assert block[key] == settings[key], key
-    assert block["mode"] == "packet-up"
+    # Сервер слушает auto: принимает клиентов обоих профилей.
+    assert block["mode"] == "auto"
 
 
 def test_obfuscated_inbound_carries_settings_in_extra():
@@ -124,11 +140,11 @@ def test_obfuscated_inbound_carries_settings_in_extra():
         assert extra[key] == settings[key], key
     # path и mode остаются обычными параметрами, дублировать их незачем.
     assert "path" not in extra and "mode" not in extra
-    assert params["mode"] == "packet-up"
+    assert params["mode"] == "stream-one"
 
 
-def test_link_carries_the_splitting_settings():
-    """Без них клиент откроет один длинный поток, и смысл XHTTP пропадёт."""
+def test_link_carries_the_connection_settings():
+    """Режим и xmux задаёт ссылка: на сервере их нет, клиент берёт из неё."""
     import json
     import urllib.parse
 
@@ -139,7 +155,7 @@ def test_link_carries_the_splitting_settings():
     node = make_node([inbound])
 
     link = build_link(make_user([inbound]), inbound, node)
-    assert link and "type=xhttp" in link and "mode=packet-up" in link
+    assert link and "type=xhttp" in link and "mode=stream-one" in link
 
     params = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(link).query))
     extra = json.loads(params["extra"])
@@ -160,7 +176,9 @@ def test_json_profile_repeats_server_settings_exactly():
     profile = client_config.build_profile(user, inbound, node)
     client_stream = profile["outbounds"][0]["streamSettings"]
 
-    assert client_stream["xhttpSettings"] == server_block["xhttpSettings"]
+    # Всё одинаково, кроме режима: сервер слушает auto, клиент задаёт свой.
+    server_xhttp = dict(server_block["xhttpSettings"], mode=settings["clientMode"])
+    assert client_stream["xhttpSettings"] == server_xhttp
     assert client_stream["realitySettings"]["publicKey"] == settings["publicKey"]
     assert client_stream["realitySettings"]["shortId"] == settings["shortIds"][0]
     assert client_stream["realitySettings"]["serverName"] == "www.samsung.com"

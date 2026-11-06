@@ -52,6 +52,67 @@ ANTI_FREEZE = {
 }
 
 
+# Профиль «мало рукопожатий» — по умолчанию с осени 2026.
+#
+# Дробление выше лечит заморозку после ~16 КБ, но платит за это потоком
+# новых TLS-соединений: на стенде (Xray 26.10.21, 960 запросов как при
+# браузинге) оно дало 43 рукопожатия за две минуты — одно каждые ~2,6 с.
+# В отчётах осени 2026 ТСПУ замораживает соединения после трёх с лишним
+# рукопожатий на один SNI за минуту, то есть дробление само себя и выдаёт.
+# Этот профиль на том же стенде — 2 рукопожатия, все запросы прошли.
+# Заморозка по объёму, по тем же отчётам, срабатывает в основном на
+# «подозрительных» адресах — против неё правдоподобный SNI (сосед по
+# подсети) и отпечаток firefox, а не дробление.
+#
+# Поля xmux заданы все: если указать одно, остальные сбрасываются в ноль.
+LOW_HANDSHAKE_MODE = "stream-one"
+LOW_HANDSHAKE = {
+    "xmux": {
+        "maxConcurrency": 0,
+        "maxConnections": 2,
+        "cMaxReuseTimes": 0,
+        "hMaxRequestTimes": "600-900",
+        "hMaxReusableSecs": "1800-3000",
+        "hKeepAlivePeriod": 0,
+    },
+}
+
+# Сервер с жёстко заданным режимом отвергает клиентов с другим («packet-up
+# mode is not allowed» — проверено на 26.10.21: 0 из 60 запросов). Поэтому
+# сервер слушает auto, а режим клиенту задаёт ссылка: так подписки, выданные
+# до смены профиля, продолжают работать, пока клиент их не обновит.
+SERVER_MODE = "auto"
+
+PROFILES = {"low_handshake": "мало рукопожатий", "fragment": "дробление (старый)"}
+
+
+def low_handshake_settings() -> Dict[str, Any]:
+    return {"xmux": dict(LOW_HANDSHAKE["xmux"])}
+
+
+def profile_of(settings: Dict[str, Any]) -> str:
+    """Какой профиль у подключения: по режиму, который уходит клиенту."""
+    mode = settings.get("clientMode") or settings.get("mode")
+    return "fragment" if mode == "packet-up" else "low_handshake"
+
+
+def apply_profile(settings: Dict[str, Any], profile: str) -> Dict[str, Any]:
+    """Новые настройки подключения с выбранным профилем.
+
+    Маскировочные поля и путь не трогаем; сервер всегда в auto, чтобы
+    принимать обе стороны переходного периода.
+    """
+    result = dict(settings)
+    result["mode"] = SERVER_MODE
+    if profile == "fragment":
+        result["clientMode"] = "packet-up"
+        result["extra"] = anti_freeze_settings()
+    else:
+        result["clientMode"] = LOW_HANDSHAKE_MODE
+        result["extra"] = low_handshake_settings()
+    return result
+
+
 def anti_freeze_settings() -> Dict[str, Any]:
     """Копия параметров дробления — чтобы вызывающий мог их править."""
     settings = dict(ANTI_FREEZE)
@@ -129,11 +190,18 @@ def has_obfuscation(settings: Dict[str, Any]) -> bool:
     return any(settings.get(key) not in (None, "") for key in OBFUSCATION_KEYS)
 
 
-def transport_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
-    """Блок xhttpSettings для конфига Xray — и сервера, и клиента."""
+def transport_settings(settings: Dict[str, Any], for_client: bool = False) -> Dict[str, Any]:
+    """Блок xhttpSettings для конфига Xray — и сервера, и клиента.
+
+    Режим у них может различаться: сервер слушает auto, клиенту режим
+    задаёт профиль (clientMode).
+    """
+    mode = settings.get("mode", DEFAULT_MODE)
+    if for_client and settings.get("clientMode"):
+        mode = settings["clientMode"]
     block: Dict[str, Any] = {
         "path": settings.get("path", "/"),
-        "mode": settings.get("mode", DEFAULT_MODE),
+        "mode": mode,
     }
     if settings.get("host"):
         block["host"] = settings["host"]

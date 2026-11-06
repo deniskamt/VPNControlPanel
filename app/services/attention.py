@@ -14,10 +14,10 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import NodeStatus, SecurityType
+from app.models.enums import NetworkType, NodeStatus, SecurityType
 from app.models.inbound import Host, Inbound
 from app.models.node import Node
-from app.services import masking, ports
+from app.services import masking, ports, xhttp, xray_version
 from app.services.agent_source import bundled_version, is_outdated
 
 
@@ -72,6 +72,20 @@ async def collect(session: AsyncSession) -> List[Issue]:
             "/nodes/update-agents", "Обновить все", post=True,
             confirm="Обновить агентов на всех устаревших серверах? Xray на каждом "
             "перезапустится, подключения оборвутся на несколько секунд.",
+        ))
+
+    old_core = [node for node in enabled_nodes if xray_version.is_outdated(node.xray_version)]
+    if old_core:
+        issues.append(Issue(
+            "warn",
+            f"Старое ядро Xray на {len(old_core)} серв.: {_names(old_core)}",
+            f"Рекомендуется {xray_version.RECOMMENDED}: ТСПУ, по словам разработчика Xray, "
+            "гоняется за его значениями по умолчанию, и свежее ядро несёт свежие отпечатки TLS. "
+            "Агент проверит новым ядром текущий конфиг и откатится, если что-то не так. "
+            "Нужен агент версии 6.",
+            "/nodes/update-xray", "Обновить Xray", post=True,
+            confirm=f"Поставить Xray {xray_version.RECOMMENDED} на {len(old_core)} серв.? "
+            "Xray на каждом перезапустится, подключения оборвутся на несколько секунд.",
         ))
 
     empty = [node for node in enabled_nodes if not any(i.is_enabled for i in node.inbounds)]
@@ -132,6 +146,52 @@ async def collect(session: AsyncSession) -> List[Issue]:
                     f"/inbounds/{inbound.id}/move-port", "Перенести на свободный",
                     post=True, fields={"back": "/"},
                 ))
+
+    # XHTTP под REALITY на старом профиле «дробление»: на стенде 43 TLS-
+    # рукопожатия за две минуты браузинга против 2 у нового профиля — а
+    # частые рукопожатия на один SNI ТСПУ осенью 2026 морозит.
+    for inbound in inbounds:
+        if (
+            inbound.is_enabled
+            and inbound.network == NetworkType.xhttp
+            and inbound.security == SecurityType.reality
+            and xhttp.profile_of(inbound.settings or {}) == "fragment"
+        ):
+            issues.append(Issue(
+                "warn",
+                f"«{inbound.tag}»: XHTTP на старом профиле «дробление»",
+                "Он открывает новое TLS-соединение каждые несколько секунд, а частые "
+                "рукопожатия на один SNI ТСПУ с осени 2026 замораживает. Профиль «мало "
+                "рукопожатий» держит 2 долгих соединения. Старые подписки продолжат "
+                "работать: сервер примет оба режима.",
+                f"/inbounds/{inbound.id}/xhttp-profile", "Перевести",
+                post=True, fields={"profile": "low_handshake", "back": "/"},
+            ))
+
+    # Отпечатки, которые ТСПУ, по отчётам осени 2026, выделяет: chrome (uTLS
+    # Chrome 133 — значение Xray по умолчанию), safari, ios, qq.
+    flagged = {"chrome", "safari", "ios", "qq", "random", "randomized"}
+    for inbound in inbounds:
+        fp = ((inbound.settings or {}).get("fingerprint") or "").lower()
+        if inbound.is_enabled and inbound.security == SecurityType.reality and fp in flagged:
+            issues.append(Issue(
+                "warn",
+                f"«{inbound.tag}»: отпечаток TLS «{fp}»",
+                "Отпечаток chrome — значение Xray по умолчанию, и ТСПУ, по отчётам "
+                "осени 2026, выделяет именно его (а с ним safari, ios, qq). Firefox "
+                "проходит. Поменяйте «fingerprint» в настройках подключения на firefox.",
+                "/inbounds", "К подключениям",
+            ))
+    for host in hosts:
+        fp = (host.fingerprint or "").lower()
+        if not host.is_disabled and fp in flagged:
+            issues.append(Issue(
+                "warn",
+                f"Строка «{host.remark}»: отпечаток TLS «{fp}»",
+                "Этот отпечаток ТСПУ, по отчётам осени 2026, выделяет. Очистите поле "
+                "«Отпечаток TLS» в настройке строки — подставится firefox.",
+                "/subscription", "К подписке",
+            ))
 
     # --- Маскировка REALITY --------------------------------------------------
     node_names = {node.id: node.name for node in nodes}

@@ -172,3 +172,56 @@ def test_catalog_assignment_keeps_working_own_domains():
     assert chosen[1] == "www.lovelive-anime.jp"
     # Совпадающие — разводятся.
     assert chosen[2] != chosen[3]
+
+
+def test_neighbors_must_be_good_and_really_next_door():
+    results = [
+        {"domain": "shop.neighbour.fi", "ok": True, "same_subnet": True, "ms": 3},
+        {"domain": "far.example.com", "ok": True, "same_subnet": False, "ms": 1},
+        {"domain": "broken.example.fi", "ok": False, "same_subnet": True, "ms": None},
+        {"domain": "www.microsoft.com", "ok": True, "same_subnet": True, "ms": 1},
+    ]
+    assert [r["domain"] for r in masking.usable_neighbors(results)] == ["shop.neighbour.fi"]
+
+    by_node = {1: results, 2: [{"domain": "shop.neighbour.fi", "ok": True, "same_subnet": True, "ms": 2},
+                               {"domain": "b.neighbour.de", "ok": True, "same_subnet": True, "ms": 9}]}
+    assert masking.assign_from_neighbors([1, 2], by_node) == {1: "shop.neighbour.fi", 2: "b.neighbour.de"}
+
+
+def test_agent_finds_neighbours_only_in_its_own_subnet(monkeypatch):
+    agent = _agent()
+    asked = []
+    agent._neighbor_names = lambda ip: asked.append(ip) or (["shop.neighbour.fi"] if ip.endswith(".7") else [])
+    agent.probe_domain = lambda name: {"domain": name, "ok": True, "ms": 4, "note": "годится"}
+    # socket — общий модуль процесса: подмену обязательно откатить.
+    monkeypatch.setattr(agent.socket, "getaddrinfo",
+                        lambda name, port, family=0: [(0, 0, 0, "", ("95.216.10.7", 443))])
+
+    answer = agent.neighbors({"ip": "95.216.10.20"})
+
+    assert answer["subnet"] == "95.216.10.0/24" and answer["scanned"] == 253
+    assert "95.216.10.20" not in asked
+    assert answer["results"][0]["domain"] == "shop.neighbour.fi"
+    assert answer["results"][0]["same_subnet"] is True
+
+
+def test_agent_refuses_to_scan_private_or_bad_addresses():
+    import pytest
+    from fastapi import HTTPException
+
+    agent = _agent()
+    for bad in ("10.0.0.5", "not-an-ip", ""):
+        with pytest.raises(HTTPException):
+            agent.neighbors({"ip": bad})
+    with pytest.raises(HTTPException):
+        agent.update_xray({"version": "latest; rm -rf /"})
+
+
+def test_old_xray_core_is_noticed():
+    from app.services import xray_version
+    assert xray_version.is_outdated("25.10.15")
+    assert xray_version.is_outdated("Xray 26.7.28")
+    assert not xray_version.is_outdated("26.10.21")
+    assert not xray_version.is_outdated("26.11.2")
+    # Неизвестная версия — не повод пугать.
+    assert not xray_version.is_outdated(None) and not xray_version.is_outdated("")

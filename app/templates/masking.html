@@ -23,6 +23,58 @@
   сервера он свой: одинаковый домен на всех — одна примета на весь сервис.
 </div>
 
+<div class="panel" id="neighbors">
+  <header>
+    0. Соседи по подсети — лучший вариант
+    <span class="muted" style="font-weight:400">сайты из того же дата-центра, что и сервер</span>
+  </header>
+  <div class="body">
+    <p class="muted" style="margin-top:0">
+      Пара «адрес хостера + SNI сайта корпорации» вычисляется: у корпорации свой CDN,
+      и на дешёвом VPS её не бывает. Пара «адрес хостера + SNI соседа по стойке» выглядит
+      как обычный трафик. Каждая нода проверит свою /24 на порту 443 (по одному соединению
+      на адрес) и найдёт сайты с TLS 1.3, HTTP/2 и настоящим сертификатом, которые и по DNS
+      живут рядом. Нужен агент версии 6.
+    </p>
+    <form method="post" action="/masking/neighbors" class="inline">
+      <button type="submit" class="primary">Найти соседей с серверов</button>
+      <span class="muted" style="margin-left:10px">до пары минут</span>
+    </form>
+  </div>
+  {% for item in neighbors %}
+    <div class="body" style="border-top:1px solid var(--border)">
+      <b>{{ item.node.name | flags }}</b>
+      <span class="muted">{{ item.found.subnet or '' }}{% if item.found.scanned %} · проверено адресов: {{ item.found.scanned }}{% endif %}</span>
+      {% if item.found.error %}
+        <div class="node-error">{{ item.found.error }}</div>
+      {% elif not item.usable %}
+        <div class="muted">Годных соседей не нашлось — для этого сервера берите домен из каталога ниже.</div>
+      {% else %}
+        <table class="mask-table" style="margin-top:6px">
+          <tbody>
+          {% for row in item.usable[:6] %}
+            <tr>
+              <td class="mono">{{ row.domain }}</td>
+              <td class="muted nowrap">{{ row.ms }} мс · {{ row.neighbor_ip }}</td>
+              <td style="text-align:right">
+                {% if item.reality %}
+                <form method="post" action="/masking/use-neighbor" class="inline"
+                      data-confirm="Поставить {{ row.domain }} маскировкой всем подключениям REALITY на {{ item.node.name }}?">
+                  <input type="hidden" name="node_id" value="{{ item.node.id }}">
+                  <input type="hidden" name="domain" value="{{ row.domain }}">
+                  <button class="small" type="submit">Поставить</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    </div>
+  {% endfor %}
+</div>
+
 <div class="panel" id="probe">
   <header>
     1. Проверить домены с серверов
@@ -101,6 +153,18 @@
         <div>
           <b>{{ plan.inbound.tag }}</b>
           <span class="muted">порт {{ plan.inbound.port }} · общий домен <span class="mono">{{ plan.shared }}</span></span>
+          {% if plan.xhttp_profile %}
+          <form class="inline" method="post" action="/inbounds/{{ plan.inbound.id }}/xhttp-profile"
+                style="margin-left:10px" title="Сколько TLS-рукопожатий видит ТСПУ: дробление открывает новое соединение каждые несколько секунд">
+            <input type="hidden" name="back" value="/masking#inbound-{{ plan.inbound.id }}">
+            <span class="muted">соединения:</span>
+            <select name="profile" onchange="this.form.submit()" style="width:auto;padding:2px 28px 2px 8px;font-size:12px">
+              {% for key, title in xhttp_profiles.items() %}
+                <option value="{{ key }}" {% if key == plan.xhttp_profile %}selected{% endif %}>{{ title }}</option>
+              {% endfor %}
+            </select>
+          </form>
+          {% endif %}
         </div>
         <form class="inline" method="post" action="/masking/{{ plan.inbound.id }}/auto"
               data-confirm="Раздать серверам «{{ plan.inbound.tag }}» разные домены? Клиенты получат новые ссылки при обновлении подписки.">

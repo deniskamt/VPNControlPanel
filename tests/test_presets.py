@@ -91,9 +91,11 @@ def test_xhttp_reality_preset_is_the_first_offer():
     assert first.security == SecurityType.reality
 
     settings = preset_service.build_settings(first, masking_domain="www.microsoft.com")
-    # packet-up: под REALITY «auto» выбирает stream-one — один длинный поток,
-    # который зависает после ~16 КБ.
-    assert settings["mode"] == "packet-up"
+    # Сервер слушает auto — принимает клиентов любого режима; клиенту ссылка
+    # задаёт stream-one с xmux: мало TLS-рукопожатий (services/xhttp.py).
+    assert settings["mode"] == "auto"
+    assert settings["clientMode"] == "stream-one"
+    assert settings["extra"]["xmux"]["maxConnections"] == 2
     assert settings["path"].startswith("/")
     assert settings["privateKey"] and settings["publicKey"]
     # Vision живёт только на TCP: на xhttp он ломает клиента.
@@ -105,8 +107,10 @@ def test_cdn_preset_keeps_the_domain_for_the_client():
     settings = preset_service.build_settings(preset, sni="cdn.example.com")
 
     assert settings["host"] == "cdn.example.com"
-    # За CDN длинный ответ часто режут, поэтому здесь нужен packet-up.
-    assert settings["mode"] == "packet-up"
+    # За CDN длинный ответ часто режут, поэтому здесь нужен packet-up — его
+    # получает клиент; сервер слушает auto.
+    assert settings["clientMode"] == "packet-up"
+    assert settings["mode"] == "auto"
     assert "privateKey" not in settings  # TLS терминирует CDN, REALITY тут нет
 
 
