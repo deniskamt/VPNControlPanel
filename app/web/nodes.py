@@ -308,7 +308,7 @@ async def update_all_xray(
     session: AsyncSession = Depends(get_session),
     admin: Admin = Depends(web_admin),
 ):
-    """Поставить рекомендуемое ядро Xray на все серверы, где оно старее.
+    """Поставить выбранную версию ядра Xray на все серверы, где стоит другая.
 
     Агент сам скачивает ядро, проверяет им текущий конфиг и откатывается,
     если новое не поднялось, — нода без Xray не останется.
@@ -319,7 +319,9 @@ async def update_all_xray(
         for node in (await session.execute(select(Node).where(Node.is_enabled.is_(True))))
         .scalars()
         .all()
-        if xray_version.is_outdated(node.xray_version)
+        # Ровно выбранная версия: и обновление старых, и откат слишком новых —
+        # ядро новее 26.3.27 не пускает клиентов на старом ядре.
+        if xray_version.differs(node.xray_version)
     ]
 
     async def one(node: Node):

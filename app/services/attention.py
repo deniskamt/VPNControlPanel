@@ -74,18 +74,30 @@ async def collect(session: AsyncSession) -> List[Issue]:
             "перезапустится, подключения оборвутся на несколько секунд.",
         ))
 
+    target = xray_version.RECOMMENDED
+    too_new = [node for node in enabled_nodes if xray_version.too_new(node.xray_version)]
+    if too_new:
+        issues.append(Issue(
+            "err",
+            f"Ядро Xray новее {target} на {len(too_new)} серв.: {_names(too_new)}",
+            "Сервер на ядре 26.7 и новее не пускает клиентов на старом ядре (25.x) вообще, "
+            "при любом отпечатке — проверено на стенде. Среди таких клиентов приложения на "
+            f"flutter_v2ray, в том числе AppVPN. Откат до {target}: агент проверит конфиг "
+            "старым ядром и вернёт прежнее, если что-то не так.",
+            "/nodes/update-xray", f"Откатить на {target}", post=True,
+            confirm=f"Поставить Xray {target} на {len(too_new)} серв.? Xray на каждом "
+            "перезапустится, подключения оборвутся на несколько секунд.",
+        ))
     old_core = [node for node in enabled_nodes if xray_version.is_outdated(node.xray_version)]
     if old_core:
         issues.append(Issue(
             "warn",
-            f"Старое ядро Xray на {len(old_core)} серв.: {_names(old_core)}",
-            f"Рекомендуется {xray_version.RECOMMENDED}: ТСПУ, по словам разработчика Xray, "
-            "гоняется за его значениями по умолчанию, и свежее ядро несёт свежие отпечатки TLS. "
-            "Агент проверит новым ядром текущий конфиг и откатится, если что-то не так. "
+            f"Ядро Xray старее {target} на {len(old_core)} серв.: {_names(old_core)}",
+            f"{target} пускает и старых, и новых клиентов и несёт исправления REALITY. "
             "Нужен агент версии 6.",
             "/nodes/update-xray", "Обновить Xray", post=True,
-            confirm=f"Поставить Xray {xray_version.RECOMMENDED} на {len(old_core)} серв.? "
-            "Xray на каждом перезапустится, подключения оборвутся на несколько секунд.",
+            confirm=f"Поставить Xray {target} на {len(old_core)} серв.? Xray на каждом "
+            "перезапустится, подключения оборвутся на несколько секунд.",
         ))
 
     empty = [node for node in enabled_nodes if not any(i.is_enabled for i in node.inbounds)]

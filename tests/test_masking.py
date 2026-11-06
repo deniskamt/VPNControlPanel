@@ -217,11 +217,12 @@ def test_agent_refuses_to_scan_private_or_bad_addresses():
         agent.update_xray({"version": "latest; rm -rf /"})
 
 
-def test_old_xray_core_is_noticed():
+def test_core_version_is_the_compatible_one_not_the_newest():
+    """Ядро 26.7+ на сервере не пускает клиентов на 25.x (стенд: 0 из 10)."""
     from app.services import xray_version
-    assert xray_version.is_outdated("25.10.15")
-    assert xray_version.is_outdated("Xray 26.7.28")
-    assert not xray_version.is_outdated("26.10.21")
-    assert not xray_version.is_outdated("26.11.2")
-    # Неизвестная версия — не повод пугать.
-    assert not xray_version.is_outdated(None) and not xray_version.is_outdated("")
+    assert xray_version.RECOMMENDED == "v26.3.27"
+    assert xray_version.too_new("26.10.21") and xray_version.differs("26.10.21")
+    assert xray_version.is_outdated("25.10.15") and xray_version.differs("Xray 25.10.15")
+    assert not xray_version.differs("26.3.27")
+    # Неизвестная версия — не повод что-то ставить.
+    assert not xray_version.differs(None) and not xray_version.differs("")

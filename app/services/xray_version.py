@@ -1,17 +1,30 @@
-"""Какая версия ядра Xray нужна на серверах.
+"""Какая версия ядра Xray должна стоять на серверах.
 
-Разработчик Xray про ТСПУ осенью 2026: оно «больше похоже на погоню за
-значениями Xray по умолчанию» — свежее ядро несёт свежие отпечатки uTLS и
-исправления REALITY. 26.10.21 — версия, которую рекомендуют отчёты осени 2026
-(обновление безопасности). На ней проверено вручную: конфиг XHTTP+REALITY,
-который собирает панель, принимается и пропускает трафик, а агент 6
-обновляется до неё с проверкой и откатом.
+Не «самая свежая», а самая совместимая. Ядро сервера решает, какие клиенты
+смогут подключиться, а в приложениях у людей ядро бывает очень старым:
+у flutter_v2ray, на котором построен AppVPN, — 25.3.6.
+
+Проверено на стенде (VISION и XHTTP под REALITY, отпечатки firefox и chrome,
+по 10 запросов на клетку):
+
+  сервер \\ клиент   25.3.6   25.10.15            26.3.27   26.10.21
+  25.3.6            да
+  25.10.15          да       да                            да
+  26.3.27           да       да                   да        да
+  26.7.28           НЕТ      НЕТ                  да        да
+  26.9.30           НЕТ      только chrome        да        да
+  26.10.21          НЕТ      только chrome        да        да
+
+Начиная с 26.7 сервер перестаёт пускать клиентов на ядре 25.x — при любом
+отпечатке. Поэтому на серверах держим 26.3.27: она пускает и старых, и новых.
+Обновление до 26.10.21, которое панель предлагала раньше по отчётам осени
+2026, отрезало всех клиентов на старом ядре — его надо откатить.
 """
 
 import re
 from typing import Optional, Tuple
 
-RECOMMENDED = "v26.10.21"
+RECOMMENDED = "v26.3.27"
 
 
 def parse(version: Optional[str]) -> Optional[Tuple[int, ...]]:
@@ -19,7 +32,18 @@ def parse(version: Optional[str]) -> Optional[Tuple[int, ...]]:
     return tuple(int(part) for part in match.groups()) if match else None
 
 
+def differs(version: Optional[str], recommended: str = RECOMMENDED) -> bool:
+    """Ядро не той версии — старее или новее. Неизвестную не трогаем."""
+    current = parse(version)
+    return current is not None and current != parse(recommended)
+
+
+def too_new(version: Optional[str], recommended: str = RECOMMENDED) -> bool:
+    """Новее выбранной: такое ядро может не пускать клиентов на старом ядре."""
+    current = parse(version)
+    return current is not None and current > parse(recommended)
+
+
 def is_outdated(version: Optional[str], recommended: str = RECOMMENDED) -> bool:
-    """Старее рекомендуемого. Неизвестную версию старой не считаем: о ней молчим."""
     current = parse(version)
     return current is not None and current < parse(recommended)
