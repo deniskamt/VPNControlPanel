@@ -9,7 +9,7 @@
 """
 
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from loguru import logger
 from sqlalchemy import select, update
@@ -18,11 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.clock import now_ts
 from app.core.config import settings
 from app.models.access import UserNodeAccess
-from app.models.enums import DataLimitResetStrategy, NodeStatus, UserStatus
+from app.models.enums import DataLimitResetStrategy, NodeStatus, ProxyType, UserStatus
 from app.models.node import Node
-from app.models.usage import NodeUsage, NodeUserUsage, SystemUsage
+from app.models.usage import NodeUsage, NodeUserInboundUsage, NodeUserUsage, SystemUsage
 from app.models.user import User
-from app.services import hysteria, notifier
+from app.services import hysteria, notifier, stats_email
 from app.services.audit import log_action
 from app.services.node_client import NodeClient, NodeError
 from app.services.xray_config import (
@@ -189,7 +189,9 @@ async def refresh_devices(session: AsyncSession, nodes: Sequence[Node]) -> int:
         if not payload.get("available"):
             continue
         reachable = True
-        for username, addresses in (payload.get("users") or {}).items():
+        for email, addresses in (payload.get("users") or {}).items():
+            # Метки «имя|подключение» — одному человеку принадлежат все.
+            username, _ = stats_email.parse(email)
             seen.setdefault(username, set()).update(addresses)
 
     if not reachable:
@@ -253,6 +255,30 @@ async def _record_usage(
     bucket = _hour_bucket()
     coefficient = node.usage_coefficient or 1.0
 
+    # Счётчики приходят по меткам «имя|подключение» (services/stats_email.py).
+    # Пользователю нужна сумма, а разбивка по подключениям — для «Серверов».
+    # Hysteria2 считает по одному имени: её трафик относим к подключению
+    # Hysteria2 этого сервера.
+    hysteria_ids = [
+        inbound.id for inbound in node.inbounds
+        if inbound.protocol == ProxyType.hysteria2 and inbound.is_enabled
+    ]
+    known_inbounds = {inbound.id for inbound in node.inbounds}
+    by_inbound: Dict[Tuple[str, int], int] = {}
+    folded: Dict[str, Dict[str, int]] = {}
+    for email, counters in per_user.items():
+        username, inbound_id = stats_email.parse(email)
+        into = folded.setdefault(username, {"uplink": 0, "downlink": 0})
+        into["uplink"] += int(counters.get("uplink", 0))
+        into["downlink"] += int(counters.get("downlink", 0))
+        if inbound_id is None and len(hysteria_ids) == 1:
+            inbound_id = hysteria_ids[0]
+        if inbound_id in known_inbounds:
+            amount = int(counters.get("uplink", 0)) + int(counters.get("downlink", 0))
+            key = (username, inbound_id)
+            by_inbound[key] = by_inbound.get(key, 0) + amount
+    per_user = folded
+
     usernames = [name for name, value in per_user.items() if value]
     if usernames:
         result = await session.execute(select(User).where(User.username.in_(usernames)))
@@ -297,6 +323,33 @@ async def _record_usage(
                     created_at=bucket,
                     user_id=user.id,
                     node_id=node.id,
+                    used_traffic=delta,
+                )
+            )
+
+    for (username, inbound_id), amount in by_inbound.items():
+        user = users_by_name.get(username)
+        delta = int(amount * coefficient)
+        if user is None or delta <= 0:
+            continue
+        existing = await session.execute(
+            select(NodeUserInboundUsage).where(
+                NodeUserInboundUsage.created_at == bucket,
+                NodeUserInboundUsage.user_id == user.id,
+                NodeUserInboundUsage.node_id == node.id,
+                NodeUserInboundUsage.inbound_id == inbound_id,
+            )
+        )
+        row = existing.scalar_one_or_none()
+        if row:
+            row.used_traffic += delta
+        else:
+            session.add(
+                NodeUserInboundUsage(
+                    created_at=bucket,
+                    user_id=user.id,
+                    node_id=node.id,
+                    inbound_id=inbound_id,
                     used_traffic=delta,
                 )
             )

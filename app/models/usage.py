@@ -48,3 +48,29 @@ class SystemUsage(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     uplink: Mapped[int] = mapped_column(BigInteger, default=0)
     downlink: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
+class NodeUserInboundUsage(Base):
+    """Часовой трафик пользователя по подключениям на ноде.
+
+    Из него видно, каким протоколом человек пользуется на сервере. Пишется
+    только когда трафик был: строк столько, сколько реальных сочетаний.
+    """
+
+    __tablename__ = "node_user_inbound_usages"
+    __table_args__ = (
+        Index("ix_nuiu_bucket", "created_at", "node_id", "user_id", "inbound_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    node_id: Mapped[int] = mapped_column(
+        ForeignKey("nodes.id", ondelete="CASCADE"), index=True
+    )
+    inbound_id: Mapped[int] = mapped_column(
+        ForeignKey("inbounds.id", ondelete="CASCADE"), index=True
+    )
+    used_traffic: Mapped[int] = mapped_column(BigInteger, default=0)

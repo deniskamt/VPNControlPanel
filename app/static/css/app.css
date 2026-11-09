@@ -660,3 +660,15 @@ input, select, textarea {
 .mask-table tr.current td:first-child { border-radius: 8px 0 0 8px; }
 .mask-table tr.current td:last-child { border-radius: 0 8px 8px 0; }
 .mask-table input[type=text] { min-width: 180px; }
+
+/* Протокол в списке пользователей сервера. */
+.proto-chip {
+  display: inline-block;
+  margin: 2px 4px 2px 0;
+  padding: 1px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  white-space: nowrap;
+}

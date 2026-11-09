@@ -23,7 +23,7 @@ from app.services.keys import generate_agent_token
 from app.services.node_client import NodeClient, NodeError
 from app.services.node_manager import load_users, poll_node, sync_node
 from app.services.xray_config import build_node_config, config_hash
-from app.services import ports, presence, xray_version
+from app.services import node_stats, ports, presence, xray_version
 from app.web.templates import templates
 
 router = APIRouter(prefix="/nodes")
@@ -74,6 +74,7 @@ async def list_nodes(
     )
     agent_version = bundled_version()
     node_users = await presence.users_by_node(session)
+    day = await node_stats.day_stats(session)
     return templates.TemplateResponse(
         request,
         "nodes.html",
@@ -96,6 +97,7 @@ async def list_nodes(
             },
             "NodeStatus": NodeStatus,
             "node_users": node_users,
+            "day": day,
             "online_counts": {
                 node_id: sum(1 for row in rows if row["online"])
                 for node_id, rows in node_users.items()

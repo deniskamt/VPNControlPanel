@@ -1365,3 +1365,41 @@ def test_neighbours_and_core_update_survive_unreachable_agents(client, inbound):
     assert "shop.neighbour.fi" in client.get("/masking").text
 
     assert client.post("/nodes/update-xray", follow_redirects=False).status_code == 303
+
+
+def test_nodes_page_shows_day_traffic_and_protocols(client, auth, inbound):
+    """«Серверы»: трафик за сутки и протокол, которым человек пользуется."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from app.core.config import settings
+    from app.models.node import Node
+    from app.services import node_manager, stats_email
+
+    client.post("/api/user", headers=auth,
+                json={"username": "user_proto", "proxies": {"vless": {}},
+                      "inbounds": {"vless": ["VLESS-REALITY"]}, "expire": 0})
+
+    async def traffic() -> None:
+        engine = create_async_engine(settings.DATABASE_URL)
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            node = await session.get(Node, 1)
+            await node_manager._record_usage(
+                session, node,
+                # Метки, как их теперь присылает Xray: имя|номер подключения.
+                {stats_email.make("user_proto", 1): {"uplink": 1_000_000, "downlink": 4_000_000}},
+                {"uplink": 1_000_000, "downlink": 4_000_000},
+            )
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(traffic())
+
+    page = client.get("/nodes").text
+    assert "за 24 ч" in page
+    row = page.split('id="users-1"', 1)[1].split('id="more-1"', 1)[0]
+    assert "user_proto" in row
+    # Протокол — по подключению, через которое шёл трафик.
+    assert 'class="proto-chip"' in row and "VLESS-REALITY" in row
+    assert "4.8 MB" in row or "4.77 MB" in row or "5.0 MB" in row

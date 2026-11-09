@@ -153,8 +153,8 @@
           </div>
         </td>
         <td class="nowrap">
-          {{ (node.uplink + node.downlink) | bytes }}
-          <div class="muted sub-line">подключений: {{ node.inbounds | length }}</div>
+          <span title="За последние 24 часа">{{ day.node_total.get(node.id, 0) | bytes }} <span class="muted">за 24 ч</span></span>
+          <div class="muted sub-line">всего {{ (node.uplink + node.downlink) | bytes }} · подключений: {{ node.inbounds | length }}</div>
         </td>
         <td class="nowrap">
           {# Кто сидит на сервере — по трафику: сервер, через который у
@@ -192,10 +192,20 @@
             Кто был на {{ node.name }} за последние сутки — по трафику через этот сервер.
             Один человек может быть сразу на нескольких серверах: телефон на одном, ноутбук на другом.
           </div>
+          {% set protocols = day.node_protocols.get(node.id, []) %}
+          {% if protocols %}
+            <div style="margin-bottom:8px">
+              <b>По протоколам за 24 ч:</b>
+              {% for inbound, used in protocols %}
+                <span class="proto-chip" title="{{ inbound.protocol.value }} · {{ inbound.network.value }} / {{ inbound.security.value }}">{{ inbound.tag }} · {{ used | bytes }}</span>
+              {% endfor %}
+            </div>
+          {% endif %}
           <table class="inner-users">
-            <thead><tr><th>Пользователь</th><th>Когда</th><th>Трафик на этом сервере</th></tr></thead>
+            <thead><tr><th>Пользователь</th><th>Когда</th><th>Протокол</th><th>За 24 ч</th><th>Всего на сервере</th></tr></thead>
             <tbody>
             {% for row in node_users[node.id] %}
+              {% set used_protocols = day.user_protocols.get((node.id, row.user.id), []) %}
               <tr>
                 <td class="nowrap">
                   <span class="dot {{ 'online' if row.online else 'mute' }}"></span>
@@ -203,7 +213,15 @@
                   {% if row.user.status.value != 'active' %}<span class="badge warn">{{ row.user.status.value }}</span>{% endif %}
                 </td>
                 <td class="nowrap {{ '' if row.online else 'muted' }}">{{ row.online_at | last_seen }}</td>
-                <td class="nowrap">{{ row.used_traffic | bytes }}</td>
+                <td>
+                  {% for inbound, used in used_protocols %}
+                    <span class="proto-chip" title="{{ inbound.protocol.value }} · {{ inbound.network.value }} / {{ inbound.security.value }} · {{ used | bytes }}">{{ inbound.tag }}</span>
+                  {% else %}
+                    <span class="muted" title="Разбивка по протоколам считается с этого обновления панели">—</span>
+                  {% endfor %}
+                </td>
+                <td class="nowrap">{{ day.user_day.get((node.id, row.user.id), 0) | bytes }}</td>
+                <td class="nowrap muted">{{ row.used_traffic | bytes }}</td>
               </tr>
             {% endfor %}
             </tbody>

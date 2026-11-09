@@ -15,7 +15,7 @@ from app.models.enums import NetworkType, ProxyType, SecurityType, UserStatus
 from app.models.inbound import Inbound
 from app.models.node import Node
 from app.models.user import User
-from app.services import masking, shadowsocks, xhttp
+from app.services import masking, shadowsocks, stats_email, xhttp
 
 API_PORT = 10085
 API_TAG = "api"
@@ -116,7 +116,9 @@ def _client_entry(inbound: Inbound, user: User) -> Dict[str, Any] | None:
         return None
 
     opts = inbound.settings or {}
-    email = user.username
+    # Своя метка на каждом подключении: тогда Xray считает трафик раздельно,
+    # и видно, каким протоколом человек пользуется (services/stats_email.py).
+    email = stats_email.make(user.username, getattr(inbound, "id", None))
 
     if inbound.protocol == ProxyType.vless:
         client: Dict[str, Any] = {"id": creds.get("id"), "email": email, "level": 0}

@@ -12,6 +12,7 @@ from app.models.enums import (  # noqa: E402
     UserStatus,
 )
 from app.services.links import build_link, build_user_links  # noqa: E402
+from app.services import stats_email  # noqa: E402
 from app.services.xray_config import (  # noqa: E402
     build_node_config,
     config_hash,
@@ -88,7 +89,9 @@ def test_config_contains_api_inbound_and_client():
     assert tags == ["api", "VLESS-REALITY"]
 
     clients = config["inbounds"][1]["settings"]["clients"]
-    assert clients[0]["email"] == "user_1"
+    # Метка — имя плюс номер подключения: так трафик считается по протоколам.
+    assert clients[0]["email"] == "user_1|1"
+    assert stats_email.parse(clients[0]["email"]) == ("user_1", 1)
     assert clients[0]["flow"] == "xtls-rprx-vision"
     assert config["inbounds"][1]["streamSettings"]["realitySettings"]["privateKey"] == "PRIVATE"
     # Статистика по пользователям должна быть включена, иначе не будет учёта.
@@ -106,7 +109,8 @@ def test_inactive_users_are_not_in_config():
         make_node([inbound]), [active, expired, disabled, over_limit]
     )
     emails = [
-        client["email"] for client in config["inbounds"][1]["settings"]["clients"]
+        stats_email.parse(client["email"])[0]
+        for client in config["inbounds"][1]["settings"]["clients"]
     ]
     assert emails == ["user_1"]
 
@@ -265,7 +269,7 @@ def test_blocked_node_excludes_user_from_config():
     blocked = make_user([inbound], username="user_2", blocked_nodes=[1])
 
     config = build_node_config(make_node([inbound]), [allowed, blocked])
-    emails = [c["email"] for c in config["inbounds"][1]["settings"]["clients"]]
+    emails = [stats_email.parse(c["email"])[0] for c in config["inbounds"][1]["settings"]["clients"]]
 
     assert emails == ["user_1"]
 
