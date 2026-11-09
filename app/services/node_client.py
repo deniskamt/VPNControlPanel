@@ -98,13 +98,14 @@ class NodeClient:
         hysteria: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         # Заливка конфига перезапускает Xray, это заметно дольше health-check.
+        # А если на ноде нет Hysteria2, агент ещё и скачивает её (~20 МБ).
         # Поле hysteria отправляем всегда: None значит «останови, если
         # запущен», иначе выключённое подключение осталось бы работать.
         return await self._request(
             "POST",
             "/config",
             json={"config": config, "hash": config_hash, "hysteria": hysteria},
-            timeout=max(self.timeout, 30),
+            timeout=max(self.timeout, 120 if hysteria else 30),
         )
 
     async def online(self, minutes: int = 5) -> Dict[str, Any]:

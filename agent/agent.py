@@ -44,7 +44,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 
 # Версия агента. Увеличивается при каждом изменении этого файла: панель
 # сравнивает её со своей и показывает, на каких нодах агент устарел.
-AGENT_VERSION = 6
+AGENT_VERSION = 7
 
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")
 AGENT_HOST = os.getenv("AGENT_HOST", "0.0.0.0")
@@ -260,6 +260,8 @@ class HysteriaProcess:
         self.last_error: str = ""
         self.stats_url: str = ""
         self.stats_secret: str = ""
+        self.install_error: str = ""
+        self._install_tried_at: float = 0.0
         self._log_handle = None
 
     @property
@@ -310,8 +312,9 @@ class HysteriaProcess:
             return
         if not self.available:
             self.last_error = (
-                f"нет бинарника {HYSTERIA_BIN} — обновите агента командой "
-                "установки из панели, она его доставит"
+                f"нет бинарника {HYSTERIA_BIN}, и скачать его не удалось"
+                + (f" ({self.install_error})" if self.install_error else "")
+                + " — проверьте, открывается ли с сервера github.com"
             )
             return
         try:
@@ -340,6 +343,43 @@ class HysteriaProcess:
     def restart(self) -> None:
         self.stop()
         self.start()
+
+    def install(self) -> bool:
+        """Скачать бинарник Hysteria2, если его нет.
+
+        Скрипт установки ставит его сам, но при сбое скачивания молча идёт
+        дальше, а самообновление агента приносит только agent.py. Без этого
+        нода с подключением Hysteria2 навсегда оставалась в ошибке.
+        """
+        if self.available:
+            return True
+        # Панель повторяет заливку каждый цикл опроса — без паузы при
+        # закрытом GitHub каждый её запрос висел бы на скачивании.
+        if time.time() - self._install_tried_at < 600:
+            return False
+        self._install_tried_at = time.time()
+        asset = _HYSTERIA_ASSETS.get(platform.machine().lower())
+        if not asset:
+            self.install_error = f"неизвестная архитектура {platform.machine()}"
+            return False
+        url = f"https://github.com/apernet/hysteria/releases/latest/download/{asset}"
+        target = Path(HYSTERIA_BIN)
+        staged = target.with_name(target.name + ".new")
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with urllib.request.urlopen(url, timeout=60) as response, open(staged, "wb") as out:
+                shutil.copyfileobj(response, out)
+            staged.chmod(0o755)
+            check = subprocess.run([str(staged), "version"], capture_output=True, text=True, timeout=10)
+            if check.returncode != 0:
+                raise RuntimeError("скачанный файл не запускается")
+            os.replace(staged, target)
+        except Exception as exc:  # noqa: BLE001 — любая беда со скачиванием
+            staged.unlink(missing_ok=True)
+            self.install_error = f"{url}: {exc}"
+            return False
+        self.install_error = ""
+        return True
 
     def certificate_fingerprint(self) -> str:
         """Отпечаток SHA-256 сертификата — по нему клиент и проверяет сервер.
@@ -416,7 +456,20 @@ class HysteriaProcess:
         }
 
 
+_HYSTERIA_ASSETS = {
+    "x86_64": "hysteria-linux-amd64", "amd64": "hysteria-linux-amd64",
+    "aarch64": "hysteria-linux-arm64", "arm64": "hysteria-linux-arm64",
+    "armv7l": "hysteria-linux-armv7",
+}
+
 hysteria = HysteriaProcess()
+
+
+def _same_text(path: Path, text: str) -> bool:
+    try:
+        return path.read_text(encoding="utf-8") == text
+    except OSError:
+        return False
 
 
 def apply_hysteria(config: Optional[Dict[str, Any]]) -> None:
@@ -443,10 +496,15 @@ def apply_hysteria(config: Optional[Dict[str, Any]]) -> None:
     hysteria.stats_url = f"http://{stats.get('listen', '')}" if stats.get("listen") else ""
     hysteria.stats_secret = str(stats.get("secret") or "")
 
+    hysteria.install()
+
+    text = json.dumps(config, indent=2, ensure_ascii=False)
+    # Тот же конфиг на живом процессе — не трогаем: перезапуск оборвал бы
+    # всех, кто сидит на Hysteria2, без всякой пользы.
+    if hysteria.running and _same_text(HYSTERIA_CONFIG, text):
+        return
     HYSTERIA_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    HYSTERIA_CONFIG.write_text(
-        json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    HYSTERIA_CONFIG.write_text(text, encoding="utf-8")
     hysteria.restart()
     if not hysteria.running:
         raise HTTPException(400, f"Hysteria2 не запустилась: {hysteria.last_error}")
@@ -540,6 +598,15 @@ def apply_config(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
 
     text = json.dumps(config, indent=2, ensure_ascii=False)
 
+    # Тот же конфиг на работающем Xray — перезапуск ничего не даст, а всех
+    # подключённых оборвёт. Так бывало каждый цикл опроса: если падала
+    # Hysteria2, панель заливала конфиг снова и снова, и Xray на ноде
+    # перезапускался раз в минуту. И после самообновления агента тоже.
+    if xray.running and _same_text(XRAY_CONFIG, text):
+        apply_hysteria(payload.get("hysteria"))
+        xray.config_hash = str(payload.get("hash") or "")
+        return _applied()
+
     # Отвергнутый конфиг остаётся на диске: без него причину не воспроизвести
     # руками — рабочий файл к этому моменту уже откачен на прежний.
     # Расширение обязано остаться .json: формат Xray определяет по имени файла
@@ -580,6 +647,10 @@ def apply_config(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     apply_hysteria(payload.get("hysteria"))
 
     xray.config_hash = str(payload.get("hash") or "")
+    return _applied()
+
+
+def _applied() -> Dict[str, Any]:
     return {
         "ok": True,
         "xray_running": xray.running,
