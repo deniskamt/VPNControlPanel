@@ -212,7 +212,7 @@ def allowed_users_by_inbound(node: Node, users: Iterable[User]) -> Dict[int, Lis
     for user in users:
         if user.status != UserStatus.active or user.expired or user.limited:
             continue
-        if not user.allowed_on(node.id):
+        if not user.allowed_on(node):
             continue
         for inbound in user.inbounds:
             allowed.setdefault(inbound.id, []).append(user)

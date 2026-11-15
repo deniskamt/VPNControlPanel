@@ -38,6 +38,15 @@ class NodeStatus(str, enum.Enum):
     disabled = "disabled"
 
 
+class NodeAccessMode(str, enum.Enum):
+    """Кому сервер попадает в подписку."""
+
+    # Всем, кроме тех, кому его закрыли вручную на странице пользователя.
+    all = "all"
+    # Только тем, кому его выдали на странице «Серверы».
+    selected = "selected"
+
+
 class SecurityType(str, enum.Enum):
     none = "none"
     tls = "tls"

@@ -2,20 +2,24 @@
 
 import asyncio
 import json
-from typing import List, Optional
+import re
+from typing import Dict, List, Optional
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import web_admin
 from app.core.config import settings
 from app.core.database import get_session
+from app.models.access import UserNodeAccess
 from app.models.admin import Admin
-from app.models.enums import NodeStatus
+from app.models.enums import NodeAccessMode, NodeStatus
 from app.models.inbound import Inbound
 from app.models.node import Node
+from app.models.user import User
 from app.services.agent_source import bundled_version, is_outdated, read_source
 from app.services.audit import log_action
 from app.services.flags import country_options
@@ -24,6 +28,7 @@ from app.services.node_client import NodeClient, NodeError
 from app.services.node_manager import load_users, poll_node, sync_node
 from app.services.xray_config import build_node_config, config_hash
 from app.services import node_stats, ports, presence, xray_version
+from app.services.worker import trigger_sync
 from app.web.templates import templates
 
 router = APIRouter(prefix="/nodes")
@@ -75,6 +80,7 @@ async def list_nodes(
     agent_version = bundled_version()
     node_users = await presence.users_by_node(session)
     day = await node_stats.day_stats(session)
+    granted = await _granted_users(session)
     return templates.TemplateResponse(
         request,
         "nodes.html",
@@ -102,8 +108,176 @@ async def list_nodes(
                 node_id: sum(1 for row in rows if row["online"])
                 for node_id, rows in node_users.items()
             },
+            "granted": granted,
+            # После сохранения доступа возвращаемся с раскрытой панелью
+            # этого сервера и списком логинов, которых не нашли.
+            "open_row": request.query_params.get("open", ""),
+            "missing": [
+                item for item in request.query_params.get("missing", "").split(",") if item
+            ],
+            "NodeAccessMode": NodeAccessMode,
         },
     )
+
+
+async def _granted_users(session: AsyncSession) -> Dict[int, List[User]]:
+    """Кому выдан каждый сервер «только выбранным»: {node_id: [User]}."""
+    rows = await session.execute(
+        select(UserNodeAccess.node_id, User)
+        .join(User, User.id == UserNodeAccess.user_id)
+        .where(UserNodeAccess.granted.is_(True))
+        .order_by(func.lower(User.username))
+    )
+    result: Dict[int, List[User]] = {}
+    for node_id, user in rows.all():
+        result.setdefault(node_id, []).append(user)
+    return result
+
+
+def _access_redirect(node_id: int, missing: Optional[List[str]] = None) -> RedirectResponse:
+    query = {"open": f"access-{node_id}"}
+    if missing:
+        query["missing"] = ",".join(missing)
+    return RedirectResponse(
+        f"/nodes?{urlencode(query)}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+async def _find_users(session: AsyncSession, raw: str) -> tuple:
+    """Разобрать ввод «логины или Telegram ID через запятую/пробел/строку».
+
+    Возвращает (найденные пользователи, ненайденные строки). Логин ищется без
+    учёта регистра, @ в начале отбрасывается; число сверяется и с
+    Telegram ID, и с логином (у бота логины вида id_123 и просто цифры).
+    """
+    found: Dict[int, User] = {}
+    missing: List[str] = []
+    for token in re.split(r"[,;\s]+", raw.strip()):
+        token = token.strip().lstrip("@")
+        if not token:
+            continue
+        condition = func.lower(User.username) == token.lower()
+        if token.isdigit():
+            condition = or_(condition, User.telegram_id == int(token))
+        users = (await session.execute(select(User).where(condition))).scalars().all()
+        if not users:
+            missing.append(token)
+        for user in users:
+            found[user.id] = user
+    return list(found.values()), missing
+
+
+async def _access_row(session: AsyncSession, user_id: int, node_id: int) -> UserNodeAccess:
+    access = (
+        await session.execute(
+            select(UserNodeAccess).where(
+                UserNodeAccess.user_id == user_id, UserNodeAccess.node_id == node_id
+            )
+        )
+    ).scalar_one_or_none()
+    if access is None:
+        access = UserNodeAccess(user_id=user_id, node_id=node_id)
+        session.add(access)
+    return access
+
+
+@router.post("/{node_id}/access-mode")
+async def set_access_mode(
+    node_id: int,
+    request: Request,
+    mode: str = Form(...),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Кому сервер виден в подписке: всем или только выбранным."""
+    node = await _get_node(session, node_id)
+    try:
+        new_mode = NodeAccessMode(mode)
+    except ValueError:
+        raise HTTPException(422, "Неизвестный режим доступа")
+    if node.access_mode != new_mode:
+        node.access_mode = new_mode
+        await log_action(
+            session,
+            action="node.access_mode",
+            actor=admin.username,
+            target=node.name,
+            target_type="node",
+            message="всем" if new_mode == NodeAccessMode.all else "только выбранным",
+            ip=request.client.host if request.client else None,
+        )
+        await session.commit()
+        trigger_sync()
+    return _access_redirect(node_id)
+
+
+@router.post("/{node_id}/access/add")
+async def grant_access(
+    node_id: int,
+    request: Request,
+    users: str = Form(default=""),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Выдать сервер «только выбранным» перечисленным пользователям."""
+    node = await _get_node(session, node_id)
+    found, missing = await _find_users(session, users)
+    added = []
+    for user in found:
+        access = await _access_row(session, user.id, node.id)
+        if not access.granted or access.is_allowed is False:
+            added.append(user.username)
+        access.granted = True
+        # Выдача — явное решение админа: снимает и прежнее ручное закрытие.
+        access.is_allowed = True
+    if added:
+        await log_action(
+            session,
+            action="node.access_grant",
+            actor=admin.username,
+            target=node.name,
+            target_type="node",
+            details={"users": added},
+            ip=request.client.host if request.client else None,
+        )
+    await session.commit()
+    if added:
+        trigger_sync()
+    return _access_redirect(node_id, missing)
+
+
+@router.post("/{node_id}/access/{user_id}/remove")
+async def revoke_access(
+    node_id: int,
+    user_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Забрать сервер у пользователя. Строку не удаляем: в ней его трафик."""
+    node = await _get_node(session, node_id)
+    access = (
+        await session.execute(
+            select(UserNodeAccess).where(
+                UserNodeAccess.user_id == user_id, UserNodeAccess.node_id == node_id
+            )
+        )
+    ).scalar_one_or_none()
+    if access is not None and access.granted:
+        access.granted = False
+        user = await session.get(User, user_id)
+        await log_action(
+            session,
+            action="node.access_revoke",
+            actor=admin.username,
+            target=node.name,
+            target_type="node",
+            details={"user": user.username if user else user_id},
+            ip=request.client.host if request.client else None,
+        )
+        await session.commit()
+        trigger_sync()
+    return _access_redirect(node_id)
 
 
 @router.post("/create")

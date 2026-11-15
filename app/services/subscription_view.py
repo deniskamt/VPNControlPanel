@@ -133,9 +133,16 @@ def hidden_entries(user: User, nodes: List[Node]) -> List[dict]:
         if not node.is_enabled:
             reasons.append({"what": node.name, "why": "сервер выключен"})
             continue
-        if not user.allowed_on(node.id):
+        if not user.allowed_on(node):
+            access = user.access_for(node.id)
+            private_only = node.is_private and not (access and access.blocked)
             reasons.append(
-                {"what": node.name, "why": "сервер закрыт для этого пользователя"}
+                {
+                    "what": node.name,
+                    "why": "сервер только для выбранных, этому пользователю не выдан"
+                    if private_only
+                    else "сервер закрыт для этого пользователя",
+                }
             )
             continue
 

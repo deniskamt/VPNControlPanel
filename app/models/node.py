@@ -16,7 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
-from app.models.enums import NodeStatus
+from app.models.enums import NodeAccessMode, NodeStatus
 
 # Какие inbound'ы поднимаются на какой ноде.
 node_inbounds = Table(
@@ -67,6 +67,13 @@ class Node(Base, TimestampMixin):
     last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Кому сервер виден в подписке: всем (по умолчанию) или только тем, кому
+    # его выдали (UserNodeAccess.granted).
+    access_mode: Mapped[NodeAccessMode] = mapped_column(
+        Enum(NodeAccessMode, native_enum=False, length=16),
+        default=NodeAccessMode.all,
+        server_default=NodeAccessMode.all.value,
+    )
     # Коэффициент учёта трафика (например, дорогая нода = 2.0).
     usage_coefficient: Mapped[float] = mapped_column(Float, default=1.0)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
@@ -86,6 +93,10 @@ class Node(Base, TimestampMixin):
     inbounds: Mapped[List["Inbound"]] = relationship(  # noqa: F821
         secondary=node_inbounds, back_populates="nodes", lazy="selectin"
     )
+
+    @property
+    def is_private(self) -> bool:
+        return self.access_mode == NodeAccessMode.selected
 
     @property
     def api_host(self) -> str:

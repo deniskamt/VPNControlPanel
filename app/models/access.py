@@ -11,7 +11,8 @@ class UserNodeAccess(Base):
     """Настройка доступа пользователя к конкретному серверу.
 
     Строка — это исключение из умолчания: нет строки — сервер доступен и
-    отдельного лимита на нём нет. Так добавление новой ноды не требует
+    отдельного лимита на нём нет. Исключение — сервер «только выбранным»
+    (Node.access_mode): там без строки с granted=True доступа нет. Так добавление новой ноды не требует
     трогать всех пользователей, а точечные ограничения остаются возможны.
     """
 
@@ -27,6 +28,10 @@ class UserNodeAccess(Base):
     )
 
     is_allowed: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Сервер выдан пользователю явно. Имеет значение только для серверов
+    # «только выбранным»: строки сами заводятся при учёте трафика с
+    # is_allowed=True, поэтому выдачу нельзя хранить в is_allowed.
+    granted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Отдельный лимит трафика на этом сервере. NULL — только общий лимит.
     data_limit: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     used_traffic: Mapped[int] = mapped_column(BigInteger, default=0)

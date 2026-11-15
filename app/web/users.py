@@ -316,6 +316,27 @@ async def update_node_access(
         limit = int(limit_gb * GB) if limit_gb > 0 else None
 
         access = existing.get(node.id)
+        if node.is_private:
+            # На сервере «только выбранным» галочка означает «выдан». Без
+            # строки сервера у пользователя нет, поэтому её заводим, только
+            # если сервер выдают или задают лимит.
+            if access is None:
+                if not allowed and limit is None:
+                    continue
+                access = UserNodeAccess(user_id=user.id, node_id=node.id)
+                session.add(access)
+            granted_now = bool(access.granted and access.is_allowed is not False)
+            if granted_now != allowed or access.data_limit != limit:
+                changes[node.name] = {
+                    "granted": allowed,
+                    "limit_gb": limit_gb if limit else None,
+                }
+            access.granted = allowed
+            if allowed:
+                access.is_allowed = True
+            access.data_limit = limit
+            continue
+
         if access is None:
             # Строку заводим только если что-то отличается от умолчания:
             # «доступен, без отдельного лимита».

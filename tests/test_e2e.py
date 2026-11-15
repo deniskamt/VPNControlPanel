@@ -1403,3 +1403,90 @@ def test_nodes_page_shows_day_traffic_and_protocols(client, auth, inbound):
     # Протокол — по подключению, через которое шёл трафик.
     assert 'class="proto-chip"' in row and "VLESS-REALITY" in row
     assert "4.8 MB" in row or "4.77 MB" in row or "5.0 MB" in row
+
+
+def test_server_access_mode_all_or_selected(client, auth, inbound):
+    """Сервер «только выбранным»: в подписке только у тех, кому выдан."""
+    import asyncio
+
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from app.core.config import settings
+    from app.models.user import User
+
+    for name in ("vip_a", "vip_b"):
+        created = client.post("/api/user", headers=auth,
+                              json={"username": name, "proxies": {"vless": {}},
+                                    "inbounds": {"vless": ["VLESS-REALITY"]}, "expire": 0})
+        assert created.status_code == 200, created.text
+
+    def ids() -> dict:
+        async def load() -> dict:
+            engine = create_async_engine(settings.DATABASE_URL)
+            async with AsyncSession(engine) as session:
+                rows = (await session.execute(select(User.username, User.id))).all()
+            await engine.dispose()
+            return dict(rows)
+        return asyncio.run(load())
+
+    def links(username: str) -> int:
+        user = client.get(f"/api/user/{username}", headers=auth).json()
+        path = user["subscription_url"].replace("https://vpn.example.com", "")
+        body = client.get(path, headers={"User-Agent": "v2rayNG/1.8.5"}).text
+        try:
+            decoded = base64.b64decode(body).decode()
+        except Exception:
+            decoded = body
+        # Считаем только ссылки на сервер 1: к этому месту модуля серверов
+        # в базе уже с десяток, и подписка содержит их все.
+        return sum(1 for line in decoded.splitlines()
+                   if line.startswith("vless://") and "@nl1.example.com:" in line)
+
+    user_ids = ids()
+    # По умолчанию сервер у всех. Сколько на нём подключений, зависит от
+    # предыдущих тестов модуля, поэтому сравниваем с исходным числом.
+    base = {name: links(name) for name in ("vip_a", "vip_b", "user_proto")}
+    assert all(count >= 1 for count in base.values()), base
+
+    switched = client.post("/nodes/1/access-mode", data={"mode": "selected"},
+                           follow_redirects=False)
+    assert switched.status_code == 303
+    assert "open=access-1" in switched.headers["location"]
+    # Никому не выдан — пропал у всех, в том числе у user_proto, у которого
+    # строка доступа появилась от учёта трафика.
+    assert links("vip_a") == 0 and links("vip_b") == 0 and links("user_proto") == 0
+    page = client.get("/nodes").text
+    assert "только выбранным · 0" in page
+
+    added = client.post("/nodes/1/access/add", data={"users": "@vip_a, nobody_here"},
+                        follow_redirects=False)
+    assert added.status_code == 303
+    assert "missing=nobody_here" in added.headers["location"]
+    page = client.get(added.headers["location"]).text
+    assert "Не нашёл пользователей: nobody_here" in page
+    access_row = page.split('id="access-1"', 1)[1].split("</tr>", 1)[0]
+    assert "hidden" not in access_row.split(">", 1)[0]
+    assert "vip_a" in access_row and "vip_b" not in access_row
+    assert links("vip_a") == base["vip_a"] and links("vip_b") == 0
+
+    # Со страницы пользователя: галочка «выдан».
+    detail = client.get(f"/users/{user_ids['vip_b']}").text
+    assert "только выбранным" in detail and "выдан" in detail
+    saved = client.post(f"/users/{user_ids['vip_b']}/nodes",
+                        data={"node_allowed_1": "on", "node_limit_1": ""},
+                        follow_redirects=False)
+    assert saved.status_code == 303
+    assert links("vip_b") == base["vip_b"]
+
+    removed = client.post(f"/nodes/1/access/{user_ids['vip_a']}/remove",
+                          follow_redirects=False)
+    assert removed.status_code == 303
+    assert links("vip_a") == 0 and links("vip_b") == base["vip_b"]
+
+    back = client.post("/nodes/1/access-mode", data={"mode": "all"}, follow_redirects=False)
+    assert back.status_code == 303
+    assert {name: links(name) for name in base} == base
+
+    bad = client.post("/nodes/1/access-mode", data={"mode": "nobody"}, follow_redirects=False)
+    assert bad.status_code == 422

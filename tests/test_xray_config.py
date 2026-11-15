@@ -60,7 +60,10 @@ def make_user(
         "proxy_settings": lambda wanted, _creds=creds, _p=protocol: (
             _creds if wanted == _p else None
         ),
-        "allowed_on": lambda node_id, _blocked=set(blocked_nodes): node_id not in _blocked,
+        # Код передаёт сам сервер (по нему видно и режим доступа).
+        "allowed_on": lambda node, _blocked=set(blocked_nodes): (
+            getattr(node, "id", node) not in _blocked
+        ),
     }
     data.update(overrides)
     return SimpleNamespace(**data)

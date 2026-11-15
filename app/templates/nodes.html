@@ -126,6 +126,9 @@
         <td>
           <div class="who">{{ flag(node.country) }} {{ node.name }}</div>
           <div class="mono muted">{{ node.address }}:{{ node.agent_port }}</div>
+          {% if node.is_private %}
+            <span class="badge warn" title="В подписке только у тех, кому выдан">только выбранным · {{ granted.get(node.id, []) | length }}</span>
+          {% endif %}
         </td>
         {# Состояние и время ответа — про одно и то же, поэтому в одной
            ячейке: колонок было восемь, и кнопкам не оставалось места. #}
@@ -174,6 +177,7 @@
              Обновление агента выносим наверх, только когда он устарел. #}
           <div class="actions">
             <button class="small" data-toggle="#node-{{ node.id }}">Изменить</button>
+            <button class="small" data-toggle="#access-{{ node.id }}">Доступ</button>
             <a class="btn small" href="/nodes/{{ node.id }}/config">Конфиг</a>
             {% if agent_outdated[node.id] %}
             <form class="inline" method="post" action="/nodes/{{ node.id }}/update-agent"
@@ -305,6 +309,58 @@ python3 selftest_node.py</div>
               — у этого сервера агент слушает локально, так что открывать ничего не нужно.
             {% endif %}
           </p>
+        </td>
+      </tr>
+      {% set users_with_access = granted.get(node.id, []) %}
+      <tr class="row-detail" id="access-{{ node.id }}" {% if open_row != 'access-' ~ node.id %}hidden{% endif %}>
+        <td colspan="6">
+          <form method="post" action="/nodes/{{ node.id }}/access-mode"
+                {% if not node.is_private and not users_with_access %}data-confirm="Сделать {{ node.name }} только для выбранных? Пока список пуст, сервер пропадёт из подписки у всех."{% endif %}>
+            <div class="checks" style="flex-direction:column;align-items:flex-start">
+              <label>
+                <input type="radio" name="mode" value="all" {% if not node.is_private %}checked{% endif %}>
+                <b>Всем пользователям</b> <span class="muted">— по умолчанию; закрыть отдельному человеку можно на его странице</span>
+              </label>
+              <label>
+                <input type="radio" name="mode" value="selected" {% if node.is_private %}checked{% endif %}>
+                <b>Только выбранным</b> <span class="muted">— сервер есть в подписке лишь у тех, кто в списке ниже</span>
+              </label>
+            </div>
+            <button class="small primary" type="submit" style="margin-top:8px">Сохранить режим</button>
+          </form>
+
+          {% if open_row == 'access-' ~ node.id and missing %}
+            <div class="node-error" style="margin-top:10px">Не нашёл пользователей: {{ missing | join(', ') }}</div>
+          {% endif %}
+
+          <div style="margin-top:14px">
+            <b>Выдан пользователям ({{ users_with_access | length }})</b>
+            {% if not node.is_private %}
+              <span class="muted">— список работает, только когда выбран режим «Только выбранным»</span>
+            {% endif %}
+          </div>
+          {% if users_with_access %}
+            <div class="row-actions" style="margin-top:8px">
+              {% for user in users_with_access %}
+                <form class="inline" method="post" action="/nodes/{{ node.id }}/access/{{ user.id }}/remove">
+                  <span class="proto-chip">
+                    <a href="/users/{{ user.id }}">{{ user.username }}</a>
+                    <button class="small" type="submit" title="Забрать сервер у {{ user.username }}">✕</button>
+                  </span>
+                </form>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="muted" style="margin-top:6px">Пока никому.</div>
+          {% endif %}
+
+          <form method="post" action="/nodes/{{ node.id }}/access/add" class="form-row" style="margin-top:12px">
+            <label>Выдать: логины или Telegram ID через запятую или пробел</label>
+            <div class="actions">
+              <input type="text" name="users" placeholder="ivan, @petya, 123456789" required style="max-width:420px">
+              <button class="small" type="submit">Выдать</button>
+            </div>
+          </form>
         </td>
       </tr>
       <tr class="row-detail" id="node-{{ node.id }}" hidden>

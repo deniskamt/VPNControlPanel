@@ -116,14 +116,21 @@ class User(Base, TimestampMixin):
                 return access
         return None
 
-    def allowed_on(self, node_id: int) -> bool:
-        """Доступен ли пользователю этот сервер.
+    def allowed_on(self, node: Any) -> bool:
+        """Доступен ли пользователю этот сервер (Node или его id).
 
         Отсутствие настройки означает «доступен» — иначе каждая новая нода
-        была бы закрыта для всех, пока её не отметят вручную.
+        была бы закрыта для всех, пока её не отметят вручную. Сервер «только
+        выбранным» доступен лишь тем, кому его выдали. Ручное закрытие и
+        исчерпанный лимит на сервере действуют в обоих режимах.
         """
+        node_id = getattr(node, "id", node)
         access = self.access_for(node_id)
-        return access is None or not access.blocked
+        if access is not None and access.blocked:
+            return False
+        if getattr(node, "is_private", False):
+            return access is not None and access.granted
+        return True
 
     @property
     def over_device_limit(self) -> bool:

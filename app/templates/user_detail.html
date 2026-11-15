@@ -78,13 +78,20 @@
             <td>
               {{ flag(node.country) }} {{ node.name }}
               {% if not node.is_enabled %}<span class="badge mute">выключен</span>{% endif %}
+              {% if node.is_private %}<span class="badge warn" title="Сервер виден только тем, кому выдан">только выбранным</span>{% endif %}
             </td>
             <td>
               <div class="checks">
                 <label>
+                  {% if node.is_private %}
+                  <input type="checkbox" name="node_allowed_{{ node.id }}"
+                         {% if access and access.granted and access.is_allowed %}checked{% endif %}>
+                  выдан
+                  {% else %}
                   <input type="checkbox" name="node_allowed_{{ node.id }}"
                          {% if not access or access.is_allowed %}checked{% endif %}>
                   разрешён
+                  {% endif %}
                 </label>
               </div>
             </td>

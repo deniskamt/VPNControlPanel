@@ -26,6 +26,8 @@ COLUMNS: List[Tuple[str, str, str]] = [
     ("nodes", "agent_version", "INTEGER"),
     ("nodes", "hysteria_cert_sha256", "VARCHAR(128)"),
     ("user_node_access", "online_at", "TIMESTAMP WITHOUT TIME ZONE"),
+    ("nodes", "access_mode", "VARCHAR(16) DEFAULT 'all' NOT NULL"),
+    ("user_node_access", "granted", "BOOLEAN DEFAULT FALSE NOT NULL"),
 ]
 
 

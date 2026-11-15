@@ -272,7 +272,7 @@ def user_rows(
             continue
         # Закрытый для пользователя сервер не должен появляться в подписке:
         # иначе клиент будет упорно долбиться в него и показывать ошибки.
-        if not user.allowed_on(node.id):
+        if not user.allowed_on(node):
             continue
         for inbound in node.inbounds:
             if not inbound.is_enabled or inbound.id not in allowed_ids:
