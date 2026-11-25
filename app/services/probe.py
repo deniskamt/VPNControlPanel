@@ -37,6 +37,7 @@ from app.services.node_client import NodeClient, NodeError
 PROBE_AGENT_VERSION = 8
 # Агент, который умеет /reach — нужен для подбора нового порта.
 REACH_AGENT_VERSION = 9
+HEALTH_RETRY_DELAY = 8
 # Сколько провалов подряд, прежде чем писать в Telegram: одиночный сбой
 # бывает и у здорового сервера (перезапуск ядра, моргнула сеть).
 ALERT_AFTER = 2
@@ -232,10 +233,15 @@ async def _run(session: AsyncSession, probe: Probe, load_nodes) -> None:
     client = NodeClient(probe)
     try:
         health = await client.health()
-    except NodeError as exc:
-        probe.status, probe.message = "error", str(exc)
-        await session.commit()
-        return
+    except NodeError:
+        # Агент мог как раз перезапускаться (обновление) — это пара секунд.
+        await asyncio.sleep(HEALTH_RETRY_DELAY)
+        try:
+            health = await client.health()
+        except NodeError as exc:
+            probe.status, probe.message = "error", str(exc)
+            await session.commit()
+            return
 
     probe.agent_version = health.get("agent_version")
     probe.xray_version = health.get("xray_version") or probe.xray_version

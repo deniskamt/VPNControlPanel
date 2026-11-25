@@ -152,7 +152,9 @@ async def update_probe_agent(
     version = bundled_version(source)
     try:
         await NodeClient(probe).update_agent(source, version)
-        probe.message = f"агент обновляется до версии {version} — проверьте через минуту"
+        probe.message = f"агент обновляется до версии {version} — проверка запустится сама"
+        # Агент перезапускается пару секунд; потом проверка обновит версию и статус.
+        probe_service.run_in_background(probe.id, delay=15)
     except NodeError as exc:
         probe.status, probe.message = "error", str(exc)
     await log_action(session, action="probe.update_agent", actor=admin.username,
