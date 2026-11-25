@@ -252,3 +252,22 @@ def test_unfixable_is_reported_once():
     asyncio.run(probe_fix.apply(object(), probe, [], probe_fix.Plan(), now=NOW))
     _, fresh = asyncio.run(probe_fix.apply(object(), probe, [], probe_fix.Plan(notes={"ip:6": "x"}), now=NOW))
     assert fresh == ["x"]
+
+
+def test_hosts_with_own_port_are_reported_not_skipped_silently():
+    xhttp = inbound(2, "VLESS-REALITY-XHTTP", 443)
+    xhttp.hosts = [SimpleNamespace(port=443, is_disabled=False)]
+    nodes = [node(1), node(2)]
+    for n in nodes:
+        n.inbounds = [VISION, xhttp]
+    merged = results({1: (ok(), port_cut()), 2: (ok(), port_cut())})
+    todo = probe_fix.plan(nodes, merged, {}, now=NOW)
+    assert todo.move_ports == [] and "port-hosts:2" in todo.notes
+
+
+def test_open_problems_are_kept_for_the_page():
+    import asyncio
+
+    probe = SimpleNamespace(fixes={}, auto_hide=True)
+    asyncio.run(probe_fix.apply(object(), probe, [], probe_fix.Plan(notes={"a": "текст"}), now=NOW))
+    assert probe.fixes["open"] == ["текст"]

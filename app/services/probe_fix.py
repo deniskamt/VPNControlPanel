@@ -190,8 +190,7 @@ def plan(
             inbound = inbounds[inbound_id]
             if inbound.protocol == ProxyType.hysteria2 or not inbound.is_enabled:
                 continue
-            if any(host.port for host in inbound.hosts if not host.is_disabled):
-                continue  # у хостов свой порт — их порт панель не знает
+            host_ports = any(host.port for host in inbound.hosts if not host.is_disabled)
             reachable: List[int] = []
             cut: List[int] = []
             for node_id in node_ids:
@@ -212,6 +211,14 @@ def plan(
                         "России только на этом сервере — порт подключения общий, менять его "
                         "всем не стану. Поможет новый IP"
                     )
+                continue
+            if host_ports:
+                # У хостов подключения свой порт в ссылке — менять порт на
+                # серверах бесполезно, а порт хоста может вести через nginx.
+                result.notes[f"port-hosts:{inbound_id}"] = (
+                    f"{inbound.tag}: порт {inbound.port} режут из России, но у хостов этого "
+                    "подключения свой порт в ссылке — поменяйте порт подключения и хостов вручную"
+                )
                 continue
             last = (history.get("inbounds") or {}).get(str(inbound_id), {}).get("at")
             if last and now - datetime.fromisoformat(last) < PORT_COOLDOWN:
@@ -282,6 +289,7 @@ async def _pick_port(client, inbound, nodes: Sequence[Any], from_russia_ids: Seq
             continue
         if ports.clashes(port, inbound.protocol, inbound.listen, nodes, exclude_id=inbound.id):
             continue
+        logger.info(f"Зонд: пробую порт {port} для {inbound.tag}")
         hosts = [masking_address(node) for node in nodes]
         # Из России проверяем только серверы, до которых оттуда вообще
         # доходит: заблокированный IP не даст пройти ни одному порту.
@@ -293,10 +301,12 @@ async def _pick_port(client, inbound, nodes: Sequence[Any], from_russia_ids: Seq
             return None
         from_russia = {item["host"]: item.get("state") for item in answer.get("results", [])}
         if any(from_russia.get(host) != "closed" for host in russian):
+            logger.info(f"Зонд: порт {port} из России не проходит: {from_russia}")
             continue
         from_europe = await asyncio.gather(*(_panel_reach(host, port) for host in hosts))
         if all(state == "closed" for state in from_europe):
             return port
+        logger.info(f"Зонд: порт {port} из Европы не годится: {dict(zip(hosts, from_europe))}")
     return None
 
 
@@ -453,6 +463,7 @@ async def apply(client, probe, nodes: Sequence[Any], todo: Plan, now: Optional[d
     }
     for text in done:
         _log(history, text, now)
+    history["open"] = list(todo.notes.values())
     probe.fixes = history
     return done, fresh
 

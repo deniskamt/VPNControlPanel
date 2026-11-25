@@ -146,6 +146,7 @@
     <div>
       <div class="who">{{ flag('RU') }} {{ probe.name }}
         {% if not probe.is_enabled %}<span class="badge mute">выключен</span>
+        {% elif panel.healing %}<span class="badge warn">исправляет…</span>
         {% elif panel.running %}<span class="badge warn">идёт проверка…</span>
         {% elif probe.status == 'connected' %}<span class="badge ok">на связи</span>
         {% elif probe.status == 'error' %}<span class="badge err">ошибка</span>
@@ -246,6 +247,14 @@ AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent
         </form>
       </div>
       {% endfor %}
+    </div>
+    {% endif %}
+    {% if panel.open %}
+    <div class="probe-open">
+      <b>Сам не исправить:</b>
+      <ul>
+        {% for text in panel.open %}<li>{{ text }}</li>{% endfor %}
+      </ul>
     </div>
     {% endif %}
     {% if panel.log %}

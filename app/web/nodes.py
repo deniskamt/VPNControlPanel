@@ -157,12 +157,14 @@ async def _probe_panels(session: AsyncSession, nodes: List[Node]) -> List[Dict]:
             "rows": rows,
             "summary": probe_service.summary(probe),
             "running": probe.id in probe_service.running,
+            "healing": probe.id in probe_service.healing,
             "outdated": bool(probe.last_seen_at) and (probe.agent_version or 0) < latest,
             "log": [
                 dict(item, at=_parse_time(item.get("at")))
                 for item in (probe.fixes or {}).get("log", [])[:10]
             ],
             "hidden": [node for node in nodes if node.probe_hidden],
+            "open": (probe.fixes or {}).get("open", []),
         })
     return panels
 

@@ -692,3 +692,5 @@ input, select, textarea {
 .probe-hidden-item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .probe-log summary { cursor: pointer; font-weight: 600; }
 .probe-log ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.probe-open { color: var(--warn); }
+.probe-open ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }

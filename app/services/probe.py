@@ -44,6 +44,8 @@ ALERT_AFTER = 2
 
 # Зонды, которые проверяют прямо сейчас (для страницы: «идёт проверка»).
 running: set = set()
+# Зонды, которые сейчас исправляют найденное (для страницы: «исправляет…»).
+healing: set = set()
 _locks: Dict[int, asyncio.Lock] = {}
 
 
@@ -299,7 +301,11 @@ async def _run(session: AsyncSession, probe: Probe, load_nodes) -> None:
     logger.info(f"Зонд {probe.name}: проверено {len(merged)}, не работает {bad}")
     if events:
         notifier.notify_background(alert_text(probe.name, events))
-    await heal(session, probe, client, nodes, merged)
+    healing.add(probe.id)
+    try:
+        await heal(session, probe, client, nodes, merged)
+    finally:
+        healing.discard(probe.id)
 
 
 async def heal(session: AsyncSession, probe: Probe, client: NodeClient, nodes, merged) -> None:
@@ -315,6 +321,12 @@ async def heal(session: AsyncSession, probe: Probe, client: NodeClient, nodes, m
                 f"новый порт — обновите его до версии {REACH_AGENT_VERSION} кнопкой «Обновить агента»"
             )
         todo.move_ports = []
+    if not todo.empty:
+        logger.info(
+            f"Зонд {probe.name}: исправляю — скрыть {todo.hide}, вернуть {todo.unhide}, "
+            f"порт у подключений {[i for i, _ in todo.move_ports]}, "
+            f"домен у серверов {[n for n, _ in todo.rotate_domains]}"
+        )
     try:
         done, fresh = await probe_fix.apply(client, probe, nodes, todo)
     except Exception as exc:  # noqa: BLE001 — самолечение не должно ронять проверку
