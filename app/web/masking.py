@@ -223,6 +223,70 @@ async def use_neighbor(
     return _redirect("neighbors")
 
 
+def _node_reality(node: Node, inbounds: List[Inbound]) -> List[Inbound]:
+    return [inbound for inbound in inbounds if any(item.id == node.id for item in inbound.nodes)]
+
+
+@router.post("/neighbors/random")
+async def random_neighbors(
+    node_id: int = Form(default=0),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Случайный сосед по подсети — одному серверу (node_id) или всем, по
+    последнему поиску соседей. Ставится всем подключениям REALITY сервера."""
+    nodes = list(
+        (await session.execute(select(Node).where(Node.is_enabled.is_(True)))).scalars().all()
+    )
+    # Мостам нужен российский сайт — их маскировку здесь не трогаем.
+    targets = [
+        node for node in nodes
+        if not node.bridge and node.id in _LAST_NEIGHBORS and (not node_id or node.id == node_id)
+    ]
+    if not targets:
+        raise HTTPException(409, "Сначала найдите соседей с серверов — кнопка выше")
+    reality = await _reality_inbounds(session)
+    target_ids = {node.id for node in targets}
+    current: Dict[int, str] = {}
+    taken: List[str] = []
+    for inbound in reality:
+        for node in inbound.nodes:
+            domain = masking.domain_for(inbound.settings, node.id)
+            if not domain:
+                continue
+            if node.id in target_ids:
+                current.setdefault(node.id, domain)
+            else:
+                taken.append(domain)  # у остальных серверов домены не отбираем
+    chosen = masking.assign_random_neighbors(
+        [node.id for node in targets],
+        {nid: found.get("results", []) for nid, found in _LAST_NEIGHBORS.items()},
+        taken=taken,
+        current=current,
+    )
+    if not chosen:
+        raise HTTPException(409, "Годных соседей не нашлось ни у одного сервера")
+    names = {node.id: node.name for node in targets}
+    for nid, domain in chosen.items():
+        node = next(item for item in targets if item.id == nid)
+        for inbound in _node_reality(node, reality):
+            domains = masking.node_domains(inbound.settings)
+            domains[str(nid)] = domain
+            _save_node_domains(inbound, domains)
+    await log_action(
+        session,
+        action="inbound.node_domain",
+        actor=admin.username,
+        target=names[node_id] if node_id else "серверы",
+        target_type="node",
+        message="случайные соседи: " + ", ".join(f"{names[n]} → {d}" for n, d in chosen.items()),
+        details={"chosen": {str(key): value for key, value in chosen.items()}},
+        commit=True,
+    )
+    trigger_sync()
+    return _redirect("neighbors")
+
+
 @router.post("/probe")
 async def run_probe(
     extra: str = Form(default=""),

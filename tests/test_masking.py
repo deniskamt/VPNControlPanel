@@ -226,3 +226,44 @@ def test_core_version_is_the_compatible_one_not_the_newest():
     assert not xray_version.differs("26.3.27")
     # Неизвестная версия — не повод что-то ставить.
     assert not xray_version.differs(None) and not xray_version.differs("")
+
+
+def _found(*domains):
+    return [{"domain": d, "ok": True, "same_subnet": True, "ms": 10} for d in domains]
+
+
+def test_random_neighbors_are_distinct_and_avoid_current():
+    import random
+
+    from app.services import masking as m
+
+    neighbors = {1: _found("a.example", "b.example", "c.example", "e.example"),
+                 2: _found("a.example", "d.example"),
+                 3: [{"domain": "x.example", "ok": False, "same_subnet": True}]}
+    for seed in range(30):
+        chosen = m.assign_random_neighbors(
+            [1, 2, 3], neighbors, taken=["c.example"], current={1: "b.example"},
+            rng=random.Random(seed))
+        assert 3 not in chosen                       # годных соседей нет
+        assert chosen[1] != chosen[2]                # без повторов
+        assert "c.example" not in chosen.values()    # занят другим сервером
+        assert chosen[1] != "b.example"              # нынешний, раз есть другой
+
+
+def test_random_neighbors_really_vary():
+    import random
+
+    from app.services import masking as m
+
+    neighbors = {1: _found(*(f"s{i}.example" for i in range(10)))}
+    picks = {m.assign_random_neighbors([1], neighbors, rng=random.Random(seed))[1]
+             for seed in range(40)}
+    assert len(picks) > 3
+
+
+def test_current_domain_kept_only_when_nothing_else():
+    from app.services import masking as m
+
+    chosen = m.assign_random_neighbors([1], {1: _found("only.example")},
+                                       current={1: "only.example"})
+    assert chosen == {1: "only.example"}

@@ -348,3 +348,41 @@ def assign_from_neighbors(
                 used.add(item["domain"])
                 break
     return chosen
+
+
+def assign_random_neighbors(
+    node_ids: Sequence[int],
+    neighbors_by_node: Dict[int, List[Dict]],
+    taken: Iterable[str] = (),
+    current: Optional[Dict[int, str]] = None,
+    rng=None,
+) -> Dict[int, str]:
+    """Каждому серверу — случайный годный сосед по подсети.
+
+    Случайный, а не самый быстрый: одинаковый выбор по задержке со временем
+    даёт одинаковые домены у похожих серверов, а смена «на следующий по
+    списку» предсказуема. Домены не повторяются между серверами и с уже
+    занятыми; нынешний домен сервера берётся, только если другого нет.
+    Сервер без годных соседей в ответ не попадает.
+    """
+    import random
+
+    rng = rng or random.SystemRandom()
+    current = current or {}
+    used = set(taken)
+    chosen: Dict[int, str] = {}
+    # Сначала те, у кого выбор меньше, — как в assign_distinct.
+    pools = {
+        node_id: [item["domain"] for item in usable_neighbors(neighbors_by_node.get(node_id, []))]
+        for node_id in node_ids
+    }
+    for node_id in sorted(node_ids, key=lambda nid: (len(pools[nid]), nid)):
+        free = [domain for domain in pools[node_id] if domain not in used]
+        fresh = [domain for domain in free if domain != current.get(node_id)]
+        pick_from = fresh or free
+        if not pick_from:
+            continue
+        domain = rng.choice(pick_from)
+        chosen[node_id] = domain
+        used.add(domain)
+    return chosen

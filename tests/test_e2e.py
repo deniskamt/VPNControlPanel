@@ -1587,3 +1587,34 @@ def test_any_server_can_become_bridge_and_back(client, inbound, monkeypatch):
     assert client.post(f"/nodes/{node_id}/unbridge", follow_redirects=False).status_code == 303
     config = client.get(f"/nodes/{node_id}/config").text
     assert "UPSTREAM" not in config and "VLESS-REALITY-RU-BRIDGE" not in config
+
+
+def test_random_neighbors_from_masking_page(client, inbound):
+    """«Раздать случайных соседей»: свой случайный сосед каждому серверу."""
+    import re
+
+    from app.web import masking as masking_web
+
+    page = client.get("/nodes").text
+    ids = sorted({int(x) for x in re.findall(r'/nodes/(\d+)/config', page)})
+    configs = {i: client.get(f"/nodes/{i}/config").text for i in ids}
+    plain = [i for i in ids if "UPSTREAM" not in configs[i] and "VLESS-REALITY" in configs[i]][:2]
+    assert plain, "нужен хоть один обычный сервер с REALITY"
+    pool = [f"n{i}.neighbor.example" for i in range(6)]
+    for node_id in plain:
+        masking_web._LAST_NEIGHBORS[node_id] = {"results": [
+            {"domain": d, "ok": True, "same_subnet": True, "ms": 5} for d in pool]}
+    try:
+        assert "Раздать случайных соседей" in client.get("/masking").text
+        done = client.post("/masking/neighbors/random", follow_redirects=False)
+        assert done.status_code == 303, done.text
+        got = []
+        for node_id in plain:
+            config = client.get(f"/nodes/{node_id}/config").text
+            hits = [d for d in pool if d in config]
+            assert len(hits) == 1, hits
+            got.append(hits[0])
+        assert len(set(got)) == len(got)
+        assert "случайные соседи" in client.get("/logs").text
+    finally:
+        masking_web._LAST_NEIGHBORS.clear()

@@ -40,11 +40,24 @@
       <button type="submit" class="primary">Найти соседей с серверов</button>
       <span class="muted" style="margin-left:10px">до пары минут</span>
     </form>
+    {% if neighbors %}
+    <form method="post" action="/masking/neighbors/random" class="inline" style="margin-left:10px"
+          data-confirm="Раздать каждому серверу случайного соседа из найденных? Домены не повторятся, у каждого сервера сменится маскировка всех подключений REALITY. Люди получат новые ссылки с обновлением подписки.">
+      <button type="submit">Раздать случайных соседей всем</button>
+    </form>
+    {% endif %}
   </div>
   {% for item in neighbors %}
     <div class="body" style="border-top:1px solid var(--border)">
       <b>{{ item.node.name | flags }}</b>
-      <span class="muted">{{ item.found.subnet or '' }}{% if item.found.scanned %} · проверено адресов: {{ item.found.scanned }}{% endif %}</span>
+      <span class="muted">{{ item.found.subnet or '' }}{% if item.found.scanned %} · проверено адресов: {{ item.found.scanned }}{% endif %}{% if item.usable %} · годных: {{ item.usable | length }}{% endif %}</span>
+      {% if item.usable and item.reality and not item.node.bridge %}
+      <form method="post" action="/masking/neighbors/random" class="inline" style="margin-left:8px"
+            data-confirm="Поставить {{ item.node.name }} случайного соседа из {{ item.usable | length }} найденных?">
+        <input type="hidden" name="node_id" value="{{ item.node.id }}">
+        <button class="small" type="submit">Случайный</button>
+      </form>
+      {% endif %}
       {% if item.found.error %}
         <div class="node-error">{{ item.found.error }}</div>
       {% elif not item.usable %}
