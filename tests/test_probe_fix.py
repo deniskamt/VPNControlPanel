@@ -271,3 +271,43 @@ def test_open_problems_are_kept_for_the_page():
     probe = SimpleNamespace(fixes={}, auto_hide=True)
     asyncio.run(probe_fix.apply(object(), probe, [], probe_fix.Plan(notes={"a": "текст"}), now=NOW))
     assert probe.fixes["open"] == ["текст"]
+
+
+def test_blocked_server_firewall_does_not_veto_new_port(monkeypatch):
+    """Живой случай: заблокированный сервер глушит все порты (файрвол
+    хостинга) — это не повод оставлять остальным порт, который режут."""
+    import asyncio
+
+    async def panel_reach(host, port):
+        if host == "10.0.0.3":
+            return "timeout"
+        if host == "10.0.0.1" and port == 2083:
+            return "open"      # 2083 на первом сервере занят чем-то чужим
+        return "closed"
+
+    monkeypatch.setattr(probe_fix, "_panel_reach", panel_reach)
+
+    class Agent:
+        async def reach(self, targets):
+            return {"results": [{"host": t["host"], "port": t["port"], "state": "closed"}
+                                for t in targets]}
+
+    xhttp = inbound(2, "VLESS-REALITY-XHTTP", 443)
+    vision = inbound(1, "VLESS-REALITY-VISION", 2053)
+    nodes = [node(1), node(2), node(3)]
+    for n in nodes:
+        n.inbounds = [vision, xhttp]
+    probe = SimpleNamespace(fixes={}, auto_hide=True)
+    todo = probe_fix.Plan(move_ports=[(2, [1, 2])])
+    asyncio.run(probe_fix.apply(Agent(), probe, nodes, todo, now=NOW))
+    assert xhttp.port == 2087   # 2083 занят на №1, «таймаут» у №3 не мешает
+
+    # У работающего сервера таймаут из Европы — порт не годится.
+    async def strict(host, port):
+        return "timeout" if host == "10.0.0.2" else "closed"
+
+    monkeypatch.setattr(probe_fix, "_panel_reach", strict)
+    xhttp.port = 443
+    todo = probe_fix.Plan(move_ports=[(2, [1, 2])])
+    asyncio.run(probe_fix.apply(Agent(), probe, nodes, todo, now=NOW))
+    assert xhttp.port == 443 and "port-none:2" in todo.notes

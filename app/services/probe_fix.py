@@ -303,8 +303,15 @@ async def _pick_port(client, inbound, nodes: Sequence[Any], from_russia_ids: Seq
         if any(from_russia.get(host) != "closed" for host in russian):
             logger.info(f"Зонд: порт {port} из России не проходит: {from_russia}")
             continue
-        from_europe = await asyncio.gather(*(_panel_reach(host, port) for host in hosts))
-        if all(state == "closed" for state in from_europe):
+        from_europe = dict(zip(hosts, await asyncio.gather(*(_panel_reach(host, port) for host in hosts))))
+        # Занят порт чем-то вне панели — не годится нигде. «Таймаут» из
+        # Европы (файрвол хостинга глушит порт) важен только у работающих
+        # серверов: заблокированный в России сервер всё равно не работает
+        # и не должен мешать починить остальные.
+        if all(
+            state == "closed" or (state == "timeout" and host not in russian)
+            for host, state in from_europe.items()
+        ):
             return port
         logger.info(f"Зонд: порт {port} из Европы не годится: {dict(zip(hosts, from_europe))}")
     return None
