@@ -92,7 +92,11 @@ def build_outbound(
 
     if inbound.protocol == ProxyType.shadowsocks:
         method = opts.get("method", shadowsocks.DEFAULT_METHOD)
-        password = shadowsocks.client_password(method, opts.get("password"), creds)
+        # Для 2022-методов клиенту нужны оба ключа: серверный и свой — так
+        # же, как в ссылке ss:// (shadowsocks.link_userinfo).
+        own = shadowsocks.client_password(creds.get("password") or "", method)
+        server_key = opts.get("password")
+        password = f"{server_key}:{own}" if shadowsocks.is_2022(method) and server_key else own
         return {
             "tag": "proxy",
             "protocol": "shadowsocks",

@@ -177,3 +177,19 @@ def test_control_check_from_panel():
     assert a["control"]["ok"] is True
     assert b["control"] == {"ok": False, "error": "порт закрыт"}
     assert "control" not in c  # до сервера дошли — контроль не нужен
+
+
+def test_shadowsocks_target_builds():
+    """Раньше генератор исходящего Shadowsocks падал с TypeError — и вместе с
+    ним вся проверка зонда и мост, если на сервере есть Shadowsocks."""
+    from app.services import shadowsocks
+
+    ss = make_inbound(id=5, tag="SS", protocol=ProxyType.shadowsocks, security=SecurityType.none,
+                      settings={"method": "2022-blake3-aes-128-gcm", "password": "U0VSVkVSS0VZMTIzNDU2Nw=="})
+    plain = make_inbound(id=6, tag="SS-OLD", protocol=ProxyType.shadowsocks,
+                         security=SecurityType.none, settings={"method": "aes-128-gcm"})
+    targets = probe.build_targets([make_node([ss, plain])], key())
+    by_tag = {t["label"]["inbound"]: t["outbound"]["settings"]["servers"][0] for t in targets}
+    own = shadowsocks.client_password("probe-ss", "2022-blake3-aes-128-gcm")
+    assert by_tag["SS"]["password"] == f"U0VSVkVSS0VZMTIzNDU2Nw==:{own}"
+    assert by_tag["SS-OLD"]["password"] == "probe-ss"

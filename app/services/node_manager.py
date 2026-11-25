@@ -86,6 +86,18 @@ async def _set_status(
             )
 
 
+async def node_config(session: AsyncSession, node: Node, users: List[User]) -> dict:
+    """Конфиг Xray для сервера — один для синхронизации и для страницы
+    «Конфиг»: служебный ключ на всех, выходы за границу — у моста."""
+    key = await probe_identity.for_servers(session)
+    upstreams = None
+    if node.bridge:
+        from app.services import bridge
+
+        upstreams = bridge.upstream_outbounds(await load_nodes(session), key)
+    return build_node_config(node, users, key, upstreams)
+
+
 async def sync_node(
     session: AsyncSession,
     node: Node,
@@ -96,7 +108,7 @@ async def sync_node(
     if users is None:
         users = await load_users(session)
 
-    config = build_node_config(node, users, await probe_identity.for_servers(session))
+    config = await node_config(session, node, users)
     # Hysteria2 живёт отдельным процессом, поэтому уезжает своим полем. В
     # отпечаток берём оба конфига: иначе правка одного только hysteria не
     # доехала бы до ноды — отпечаток Xray-части не изменился бы.

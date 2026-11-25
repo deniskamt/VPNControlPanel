@@ -27,8 +27,8 @@ from app.services.flags import country_options
 from app.services.keys import generate_agent_token
 from app.services.node_client import NodeClient, NodeError
 from app.services.node_manager import load_users, poll_node, sync_node
-from app.services.xray_config import build_node_config, config_hash
-from app.services import node_stats, ports, presence, probe_identity, xray_version
+from app.services.xray_config import config_hash
+from app.services import node_stats, ports, presence, xray_version
 from app.services.worker import trigger_sync
 from app.web.templates import templates
 
@@ -137,6 +137,7 @@ async def _probe_panels(session: AsyncSession, nodes: List[Node]) -> List[Dict]:
     from app.services import probe as probe_service
 
     from app.services.agent_source import bundled_version, read_source
+    from app.services import bridge as bridge_service
 
     order = {node.id: index for index, node in enumerate(nodes)}
     hidden = {node.id for node in nodes if node.probe_hidden}
@@ -165,6 +166,10 @@ async def _probe_panels(session: AsyncSession, nodes: List[Node]) -> List[Dict]:
             ],
             "hidden": [node for node in nodes if node.probe_hidden],
             "open": (probe.fixes or {}).get("open", []),
+            "bridge": next(
+                (n for n in nodes if n.bridge and n.agent_token == probe.agent_token), None
+            ),
+            "upstreams": [n.name for n in bridge_service.upstream_nodes(nodes)],
         })
     return panels
 
@@ -699,7 +704,9 @@ async def node_config(
     """
     node = await _get_node(session, node_id)
     users = await load_users(session)
-    config = build_node_config(node, users, await probe_identity.for_servers(session))
+    from app.services.node_manager import node_config
+
+    config = await node_config(session, node, users)
 
     return templates.TemplateResponse(
         request,

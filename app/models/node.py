@@ -77,6 +77,9 @@ class Node(Base, TimestampMixin):
     # Зонд убрал сервер из подписок: из России IP заблокирован. Сервер
     # продолжает работать и проверяться, и вернётся сам, когда заработает.
     probe_hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Мост: трафик людей не выходит в интернет отсюда, а уходит дальше на
+    # иностранные серверы (services/bridge.py).
+    bridge: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Коэффициент учёта трафика (например, дорогая нода = 2.0).
     usage_coefficient: Mapped[float] = mapped_column(Float, default=1.0)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)

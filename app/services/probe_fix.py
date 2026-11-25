@@ -21,7 +21,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import socket
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -129,6 +128,11 @@ def plan(
     """Что исправлять по результатам последнего прогона."""
     now = now or datetime.utcnow()
     result = Plan()
+    # Мост проверяется с той же машины, на которой стоит, — его результаты
+    # говорят о цепочке за границу, а не о блокировках. Его не трогаем.
+    bridges = {node.id for node in nodes if getattr(node, "bridge", False)}
+    nodes = [node for node in nodes if node.id not in bridges]
+    merged = {key: entry for key, entry in merged.items() if _split(key)[0] not in bridges}
     views = node_views(merged)
     by_id = {node.id: node for node in nodes}
     enabled = [node for node in nodes if node.is_enabled]

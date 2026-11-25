@@ -1519,3 +1519,41 @@ def test_probe_panel_and_key_on_servers(client, inbound):
     assert client.post("/probes/1/delete", follow_redirects=False).status_code == 303
     assert "ru.example.com" not in client.get("/nodes").text
     assert "probe.create" in client.get("/logs").text
+
+
+def test_bridge_created_from_probe(client, auth, inbound, monkeypatch):
+    """Мост: сервер в подписке, конфиг ведёт трафик на иностранные серверы."""
+    import re
+
+    from app.services.node_client import NodeClient
+
+    async def fake_domains(self, domains):
+        return {"results": [{"domain": "www.ozon.ru", "ok": True, "ms": 30},
+                            {"domain": "vk.com", "ok": False}]}
+
+    monkeypatch.setattr(NodeClient, "probe_domains", fake_domains)
+    created = client.post("/probes/create", data={"name": "РФ", "address": "153.0.0.1"},
+                          follow_redirects=False)
+    assert created.status_code == 303
+    page = client.get("/nodes").text
+    probe_id = int(re.search(r'action="/probes/(\d+)/bridge"', page).group(1))
+    made = client.post(f"/probes/{probe_id}/bridge", follow_redirects=False)
+    assert made.status_code == 303, made.text
+    # Повторное нажатие второй мост не создаёт.
+    client.post(f"/probes/{probe_id}/bridge", follow_redirects=False)
+
+    page = client.get("/nodes").text
+    assert page.count("РФ — мост") >= 1 and "Мост через Россию" in page
+    ids = sorted({int(x) for x in re.findall(r'/nodes/(\d+)/config', page)})
+    configs = {i: client.get(f"/nodes/{i}/config").text for i in ids}
+    bridges = [text for text in configs.values() if "UPSTREAM" in text]
+    assert len(bridges) == 1
+    assert "www.ozon.ru" in bridges[0] and "leastPing" in bridges[0]
+    # Иностранный сервер принимает служебный ключ моста.
+    assert any("__probe__" in text and "UPSTREAM" not in text for text in configs.values())
+
+    # Мост — в подписке у пользователя.
+    user = client.get("/api/user/user_12345", headers=auth).json()
+    path = user["subscription_url"].replace("https://vpn.example.com", "")
+    links = base64.b64decode(client.get(path, headers={"User-Agent": "v2rayNG/1.8.5"}).text).decode()
+    assert "153.0.0.1:443" in links and "sni=www.ozon.ru" in links

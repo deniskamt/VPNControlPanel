@@ -269,6 +269,40 @@ AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent
     {% endif %}
   </div>
 
+  <div class="body probe-bridge" id="bridge-{{ probe.id }}">
+    {% set br = panel.bridge %}
+    {% if br %}
+    <div class="who">
+      <b>Мост через Россию</b>
+      {% if not br.is_enabled %}<span class="badge mute">выключен</span>
+      {% elif br.status.value == 'connected' %}<span class="badge ok">работает</span>
+      {% elif br.status.value == 'error' %}<span class="badge err">ошибка</span>
+      {% else %}<span class="badge warn">подключается</span>{% endif %}
+    </div>
+    <p class="muted" style="margin:6px 0 0">
+      В подписке он называется «{{ br.name }}». Люди подключаются к российскому IP
+      {{ br.address }}, а дальше трафик сам уходит через самый быстрый рабочий
+      иностранный сервер: сейчас выбор из {{ panel.upstreams | length }}
+      ({{ panel.upstreams | join(', ') or 'нет ни одного' }}). Мост проверяет их раз в минуту
+      и переключается сам. Серверы, убранные из подписок, в выбор не попадают.
+    </p>
+    {% if br.message and br.status.value == 'error' %}<div class="node-error" style="margin-top:8px">{{ br.message }}</div>{% endif %}
+    {% else %}
+    <b>Мост через Россию</b>
+    <p class="muted" style="margin:6px 0 10px">
+      Сделать из этого сервера отдельный сервер в подписке: человек подключается к
+      российскому IP с маскировкой под крупный российский сайт, а дальше трафик уходит
+      через рабочий иностранный сервер. Так VPN работает даже при «белых списках» на
+      мобильном интернете. Маскировочный сайт подберётся сам — проверкой с этого сервера.
+      Займёт порт 443 на {{ probe.address }}.
+    </p>
+    <form method="post" action="/probes/{{ probe.id }}/bridge"
+          data-confirm="Создать мост через {{ probe.name }}? Он сразу появится в подписке у всех.">
+      <button class="small primary" type="submit">Сделать мост</button>
+    </form>
+    {% endif %}
+  </div>
+
   {% if panel.rows %}
   <div class="table-wrap">
     <table class="probe-table">
@@ -356,7 +390,7 @@ AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent
     {% for node in nodes %}
       <tr>
         <td>
-          <div class="who">{{ flag(node.country) }} {{ node.name }}</div>
+          <div class="who">{{ flag(node.country) }} {{ node.name }}{% if node.bridge %} <span class="badge ok" title="Трафик уходит дальше на иностранные серверы">мост</span>{% endif %}{% if node.probe_hidden %} <span class="badge warn" title="Зонд убрал сервер из подписок: IP заблокирован в России">не в подписке</span>{% endif %}</div>
           <div class="mono muted">{{ node.address }}:{{ node.agent_port }}</div>
           {% if node.is_private %}
             <span class="badge warn" title="В подписке только у тех, кому выдан">только выбранным · {{ granted.get(node.id, []) | length }}</span>

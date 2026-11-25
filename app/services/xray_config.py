@@ -220,7 +220,10 @@ def allowed_users_by_inbound(node: Node, users: Iterable[User]) -> Dict[int, Lis
 
 
 def build_node_config(
-    node: Node, users: Iterable[User], probe: Optional[User] = None
+    node: Node,
+    users: Iterable[User],
+    probe: Optional[User] = None,
+    upstreams: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Полный конфиг Xray для ноды: служебный api + все её inbound'ы.
 
@@ -254,7 +257,7 @@ def build_node_config(
             build_inbound(inbound, allowed_by_inbound.get(inbound.id, []) + extra, node.id)
         )
 
-    return {
+    config = {
         # Access-лог нужен для подсчёта устройств: агент достаёт из него
         # адреса, с которых подключался каждый пользователь.
         "log": {"loglevel": "warning", "access": ACCESS_LOG},
@@ -295,6 +298,11 @@ def build_node_config(
             ],
         },
     }
+    if getattr(node, "bridge", False):
+        from app.services import bridge
+
+        bridge.apply(config, node, upstreams or [])
+    return config
 
 
 def config_hash(config: Dict[str, Any]) -> str:

@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import ProxyType, UserStatus
+from app.models.node import Node
 from app.models.probe import Probe
 from app.models.setting import Setting
 from app.models.user import User, UserProxy
@@ -53,10 +54,15 @@ async def load(session: AsyncSession, create: bool = False) -> Optional[User]:
 
 async def for_servers(session: AsyncSession) -> Optional[User]:
     """Ключ, который нужно положить в конфиг серверов: только если есть
-    включённый зонд. Нет зонда — сервера живут без лишнего клиента."""
+    включённый зонд или мост. Нет ни того, ни другого — сервера живут без
+    лишнего клиента."""
     enabled = await session.scalar(
         select(func.count(Probe.id)).where(Probe.is_enabled.is_(True))
     )
-    if not enabled:
+    # Мосту ключ нужен как выход на иностранные серверы.
+    bridges = await session.scalar(
+        select(func.count(Node.id)).where(Node.bridge.is_(True), Node.is_enabled.is_(True))
+    )
+    if not enabled and not bridges:
         return None
-    return await load(session)
+    return await load(session, create=bool(bridges))
