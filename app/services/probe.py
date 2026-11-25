@@ -139,8 +139,20 @@ def reason(entry: Dict[str, Any]) -> str:
         return "туннель есть, но загрузка обрывается: " + (download.get("error") or "соединение замерзает")
     tls = entry.get("tls") or {}
     tunnel = entry.get("tunnel") or {}
+    control = entry.get("control") or {}
+    where = entry.get("address") or "сервер"
     if tls and not tls.get("ok"):
+        if control.get("ok"):
+            return (f"из России {where} недоступен, а из Европы доступен — "
+                    "IP или порт заблокирован в России")
+        if control and not control.get("ok"):
+            return (f"{where} недоступен и из Европы ({control.get('error') or 'нет ответа'}) — "
+                    "подключение не слушает этот порт, закрыт файрвол или сервер лежит")
         return f"не проходит даже TLS до сервера: {tls.get('error') or 'нет ответа'}"
+    if tls.get("ok"):
+        return ("TLS проходит, но туннель не поднимается: сервер не принял ключ проверки "
+                "(обновите агента и дождитесь синхронизации) или соединение режут после "
+                "рукопожатия")
     return tunnel.get("error") or "туннель не поднялся"
 
 
@@ -164,6 +176,7 @@ def merge(
             "tls": result.get("tls"),
             "tunnel": result.get("tunnel"),
             "download": result.get("download"),
+            "control": result.get("control"),
             "checked_at": now,
             "last_ok_at": now if state == "ok" else before.get("last_ok_at"),
             "fail_streak": 0 if state == "ok" else int(before.get("fail_streak") or 0) + 1,
@@ -262,7 +275,9 @@ async def _run(session: AsyncSession, probe: Probe, load_nodes) -> None:
         except NodeError as exc:
             logger.warning(f"Зонд {probe.name}: проверка доменов не удалась: {exc}")
 
-    merged, events = merge(probe.results or {}, targets, answer.get("results") or [], now)
+    results = answer.get("results") or []
+    await _add_control(targets, results)
+    merged, events = merge(probe.results or {}, targets, results, now)
     # Новые словари, а не правка на месте: иначе SQLAlchemy не заметит
     # изменений в JSON-колонках.
     probe.results = merged
@@ -275,6 +290,47 @@ async def _run(session: AsyncSession, probe: Probe, load_nodes) -> None:
     logger.info(f"Зонд {probe.name}: проверено {len(merged)}, не работает {bad}")
     if events:
         notifier.notify_background(alert_text(probe.name, events))
+
+
+CONTROL_TIMEOUT = 5
+
+
+async def reach(host: str, port: int, timeout: float = CONTROL_TIMEOUT) -> Dict[str, Any]:
+    """Открывается ли TCP-порт отсюда, из панели (то есть из Европы)."""
+    started = asyncio.get_running_loop().time()
+    try:
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": "таймаут"}
+    except ConnectionRefusedError:
+        return {"ok": False, "error": "порт закрыт"}
+    except OSError as exc:
+        return {"ok": False, "error": exc.strerror or str(exc)}
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except OSError:
+        pass
+    return {"ok": True, "ms": int((asyncio.get_running_loop().time() - started) * 1000)}
+
+
+async def _add_control(targets: Sequence[Dict[str, Any]], results: List[Dict[str, Any]]) -> None:
+    """Контроль из панели для того, до чего зонд не достучался: так видно,
+    блокируют ли сервер именно в России или он недоступен вообще."""
+    by_key = {item.get("key"): item for item in results}
+    wanted: Dict[Tuple[str, int], List[Dict[str, Any]]] = {}
+    for target in targets:
+        result = by_key.get(target["key"])
+        tls = (result or {}).get("tls") or {}
+        if result is None or not target.get("host") or not target.get("port") or tls.get("ok"):
+            continue
+        wanted.setdefault((target["host"], int(target["port"])), []).append(result)
+    if not wanted:
+        return
+    answers = await asyncio.gather(*(reach(host, port) for host, port in wanted))
+    for (place, items), answer in zip(wanted.items(), answers):
+        for item in items:
+            item["control"] = answer
 
 
 async def run_all(session: AsyncSession) -> None:

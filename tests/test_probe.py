@@ -143,3 +143,37 @@ def test_probe_key_goes_to_server_config_only_when_given():
 
     assert names(build_node_config(node, [user])) == ["user_1"]
     assert sorted(names(build_node_config(node, [user], key()))) == ["__probe__", "user_1"]
+
+
+def test_reason_tells_russian_block_from_dead_server():
+    base = {"state": "fail", "address": "de1.example.com:8443",
+            "tls": {"ok": False, "error": "таймаут"}, "tunnel": {"ok": False}}
+    assert "заблокирован в России" in probe.reason(dict(base, control={"ok": True}))
+    assert "недоступен и из Европы" in probe.reason(dict(base, control={"ok": False, "error": "таймаут"}))
+    handshake_only = dict(base, tls={"ok": True}, control=None)
+    assert "не принял ключ" in probe.reason(handshake_only)
+
+
+def test_control_check_from_panel():
+    import asyncio
+    import socket
+
+    async def go():
+        server = await asyncio.start_server(lambda r, w: w.close(), "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            closed = sock.getsockname()[1]
+        targets = [{"key": "a", "host": "127.0.0.1", "port": port},
+                   {"key": "b", "host": "127.0.0.1", "port": closed},
+                   {"key": "c", "host": "127.0.0.1", "port": port}]
+        results = [{"key": "a", "tls": {"ok": False}}, {"key": "b", "tls": {"ok": False}},
+                   {"key": "c", "tls": {"ok": True}}]
+        await probe._add_control(targets, results)
+        server.close()
+        return results
+
+    a, b, c = asyncio.run(go())
+    assert a["control"]["ok"] is True
+    assert b["control"] == {"ok": False, "error": "порт закрыт"}
+    assert "control" not in c  # до сервера дошли — контроль не нужен

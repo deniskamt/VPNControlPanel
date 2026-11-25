@@ -245,6 +245,7 @@ AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent
           <td>
             <div class="who">{{ flag(row.country) }} {{ row.node }}</div>
             <div class="muted sub-line">{{ row.inbound }} · {{ row.transport }}</div>
+            <div class="muted sub-line mono">{{ row.address }}</div>
             {% if row.state != 'ok' %}
             <div class="probe-reason">{{ row.reason }}</div>
             <div class="muted sub-line">{% if row.last_ok %}работало {{ row.last_ok | ago }}{% else %}ни разу не работало{% endif %}</div>
