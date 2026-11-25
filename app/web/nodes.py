@@ -170,6 +170,7 @@ async def _probe_panels(session: AsyncSession, nodes: List[Node]) -> List[Dict]:
                 (n for n in nodes if n.bridge and n.agent_token == probe.agent_token), None
             ),
             "upstreams": [n.name for n in bridge_service.upstream_nodes(nodes)],
+            "bridges": [n for n in nodes if n.bridge],
         })
     return panels
 
@@ -482,6 +483,50 @@ async def toggle_node(
         message="включена" if node.is_enabled else "выключена",
     )
     await session.commit()
+    return _redirect()
+
+
+@router.post("/{node_id}/bridge")
+async def make_node_bridge(
+    node_id: int,
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Сделать сервер мостом: люди подключаются к нему, а трафик уходит
+    через рабочий иностранный сервер. Для серверов в России."""
+    from app.services import bridge as bridge_service
+
+    node = await _get_node(session, node_id)
+    try:
+        domain = await bridge_service.pick_russian_domain(node)
+    except bridge_service.BridgeError as exc:
+        raise HTTPException(502, str(exc))
+    result = await bridge_service.make_bridge(session, node, domain)
+    await log_action(
+        session, action="bridge.create", actor=admin.username, target=node.name,
+        target_type="node",
+        message=f"маскировка {domain}, порт {result['inbound'].port}"
+        + (f"; сняты подключения: {', '.join(result['dropped'])}" if result["dropped"] else ""),
+    )
+    await session.commit()
+    trigger_sync()
+    return _redirect()
+
+
+@router.post("/{node_id}/unbridge")
+async def unmake_node_bridge(
+    node_id: int,
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    from app.services import bridge as bridge_service
+
+    node = await _get_node(session, node_id)
+    kept = await bridge_service.unmake_bridge(session, node)
+    await log_action(session, action="bridge.remove", actor=admin.username, target=node.name,
+                     target_type="node", message="снова обычный сервер: " + ", ".join(kept))
+    await session.commit()
+    trigger_sync()
     return _redirect()
 
 

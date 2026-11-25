@@ -1557,3 +1557,33 @@ def test_bridge_created_from_probe(client, auth, inbound, monkeypatch):
     path = user["subscription_url"].replace("https://vpn.example.com", "")
     links = base64.b64decode(client.get(path, headers={"User-Agent": "v2rayNG/1.8.5"}).text).decode()
     assert "153.0.0.1:443" in links and "sni=www.ozon.ru" in links
+
+
+
+def test_any_server_can_become_bridge_and_back(client, inbound, monkeypatch):
+    """Сервер в Яндексе добавлен обычным — делаем мостом одной кнопкой."""
+    import re
+
+    from app.services.node_client import NodeClient
+
+    async def fake_domains(self, domains):
+        return {"results": [{"domain": "dzen.ru", "ok": True, "ms": 12}]}
+
+    monkeypatch.setattr(NodeClient, "probe_domains", fake_domains)
+    created = client.post("/nodes/create", data={
+        "name": "Yandex-RU", "address": "51.250.0.1", "agent_host": "127.0.0.1",
+        "agent_port": 9, "agent_token": "ya-token", "country": "RU"}, follow_redirects=False)
+    assert created.status_code == 303
+    page = client.get("/nodes").text
+    node_id = int(re.search(r'action="/nodes/(\d+)/bridge"[^>]*\n[^\n]*Yandex-RU', page).group(1))
+
+    assert client.post(f"/nodes/{node_id}/bridge", follow_redirects=False).status_code == 303
+    config = client.get(f"/nodes/{node_id}/config").text
+    assert "UPSTREAM" in config and "dzen.ru" in config
+    # На мосту — только мостовое подключение.
+    assert "VLESS-REALITY-RU-BRIDGE" in config and "&quot;tag&quot;: &quot;VLESS-REALITY&quot;" not in config
+    assert "мост" in client.get("/nodes").text
+
+    assert client.post(f"/nodes/{node_id}/unbridge", follow_redirects=False).status_code == 303
+    config = client.get(f"/nodes/{node_id}/config").text
+    assert "UPSTREAM" not in config and "VLESS-REALITY-RU-BRIDGE" not in config

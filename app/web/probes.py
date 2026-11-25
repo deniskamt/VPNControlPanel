@@ -17,8 +17,6 @@ from app.services import probe as probe_service
 from app.services import probe_identity
 from app.services.agent_source import bundled_version, read_source
 from app.services import bridge as bridge_service
-from app.services import presets as preset_service
-from app.services import users as user_service
 from app.services.audit import log_action
 from app.services.keys import generate_agent_token
 from app.services.node_client import NodeClient, NodeError
@@ -211,25 +209,6 @@ async def unhide_node(
     return _back()
 
 
-async def _russian_domain(probe: Probe) -> str:
-    """Маскировка моста: первый крупный российский сайт, который с моста
-    годится для REALITY (TLS 1.3 и HTTP/2) — быстрее всех отвечающий."""
-    try:
-        answer = await NodeClient(probe).probe_domains(bridge_service.RUSSIAN_DOMAINS)
-    except NodeError as exc:
-        raise HTTPException(502, f"Не удалось проверить домены с моста: {exc}")
-    good = sorted(
-        (item for item in answer.get("results", []) if item.get("ok")),
-        key=lambda item: (item.get("ms") or 10**6, item["domain"]),
-    )
-    if not good:
-        raise HTTPException(
-            502, "Ни один российский сайт с этого сервера не подошёл для маскировки — "
-                 "проверьте, есть ли у сервера выход в интернет"
-        )
-    return good[0]["domain"]
-
-
 @router.post("/{probe_id}/bridge")
 async def create_bridge(
     probe_id: int,
@@ -237,9 +216,8 @@ async def create_bridge(
     session: AsyncSession = Depends(get_session),
     admin: Admin = Depends(web_admin),
 ):
-    """Сделать из российского сервера мост: отдельный сервер в подписке,
-    трафик которого уходит на рабочие иностранные серверы."""
-    from app.models.inbound import Inbound
+    """Сделать из российского сервера проверки ещё и мост: отдельный сервер в
+    подписке, трафик которого уходит на рабочие иностранные серверы."""
     from app.services.node_manager import load_users, sync_node
 
     probe = await _get(session, probe_id)
@@ -248,23 +226,11 @@ async def create_bridge(
     )).scalars().first()
     if existing is not None:
         return _back()
+    try:
+        domain = await bridge_service.pick_russian_domain(probe)
+    except bridge_service.BridgeError as exc:
+        raise HTTPException(502, str(exc))
 
-    domain = await _russian_domain(probe)
-    template = preset_service.PRESETS_BY_KEY["vless_reality"]
-    tags = list((await session.execute(select(Inbound.tag))).scalars().all())
-    tag = bridge_service.BRIDGE_TAG
-    if tag in tags:
-        tag = preset_service.suggest_tag(template, tags + [tag])
-    inbound = Inbound(
-        tag=tag,
-        remark="Мост через Россию",
-        protocol=template.protocol,
-        port=bridge_service.BRIDGE_PORT,
-        network=template.network,
-        security=template.security,
-        listen="0.0.0.0",
-        settings=preset_service.build_settings(template, masking_domain=domain),
-    )
     name = f"{probe.name} — мост"
     taken = set((await session.execute(select(Node.name))).scalars().all())
     if name in taken:
@@ -278,25 +244,17 @@ async def create_bridge(
         agent_tls=probe.agent_tls,
         agent_insecure=probe.agent_insecure,
         country="RU",
-        bridge=True,
-        # Первым в списке: тем, у кого иностранные серверы не открываются,
-        # он и нужен в первую очередь.
-        sort_order=-1,
+        inbounds=[],
     )
-    node.inbounds = [inbound]
-    session.add_all([inbound, node])
-    await session.flush()
-    granted = await user_service.grant_inbound_to_all(session, inbound)
-    # Выход моста — служебный ключ, его должны принимать иностранные серверы.
-    await probe_identity.load(session, create=True)
+    result = await bridge_service.make_bridge(session, node, domain)
     await log_action(
         session, action="bridge.create", actor=admin.username, target=node.name,
-        target_type="node", message=f"маскировка {domain}, порт {inbound.port}, выдано: {granted}",
+        target_type="node",
+        message=f"маскировка {domain}, порт {result['inbound'].port}, выдано: {result['granted']}",
         ip=request.client.host if request.client else None,
     )
     await session.commit()
     await session.refresh(node)
-    # Иностранным серверам — ключ моста, мосту — конфиг с выходами.
     trigger_sync()
     await sync_node(session, node, users=await load_users(session), force=True)
     return _back()

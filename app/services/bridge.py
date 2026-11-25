@@ -120,3 +120,104 @@ def apply(config: Dict[str, Any], node: Any, upstreams: List[Dict[str, Any]]) ->
             rules.append({"type": "field", "inboundTag": user_tags, "outboundTag": "BLOCK"})
     config.setdefault("routing", {})["rules"] = rules
     return config
+
+
+# --- Превращение сервера в мост -----------------------------------------------
+
+async def pick_russian_domain(node: Any) -> str:
+    """Маскировка моста: крупный российский сайт, который с этого сервера
+    годится для REALITY (TLS 1.3 и HTTP/2), — самый быстрый."""
+    from app.services.node_client import NodeClient, NodeError
+
+    try:
+        answer = await NodeClient(node).probe_domains(RUSSIAN_DOMAINS)
+    except NodeError as exc:
+        raise BridgeError(f"не удалось проверить домены с сервера: {exc}")
+    good = sorted(
+        (item for item in answer.get("results", []) if item.get("ok")),
+        key=lambda item: (item.get("ms") or 10**6, item["domain"]),
+    )
+    if not good:
+        raise BridgeError(
+            "ни один российский сайт с этого сервера не подошёл для маскировки — "
+            "проверьте, есть ли у сервера выход в интернет"
+        )
+    return good[0]["domain"]
+
+
+class BridgeError(Exception):
+    pass
+
+
+async def make_bridge(session, node, domain: str) -> Dict[str, Any]:
+    """Сделать сервер мостом: на нём остаётся одно подключение — мостовое,
+    на 443 с российской маскировкой, — а трафик уходит за границу.
+
+    Мостовое подключение одно на все мосты: у каждого моста свой домен
+    (nodeDomains), ключи и порт общие. Создаётся при первом мосте и сразу
+    выдаётся всем пользователям."""
+    from sqlalchemy import select
+
+    from app.models.inbound import Inbound
+    from app.services import masking, presets, probe_identity
+    from app.services import users as user_service
+
+    if node.id is None:
+        session.add(node)
+        await session.flush()
+
+    inbound = (await session.execute(
+        select(Inbound).where(Inbound.tag == BRIDGE_TAG)
+    )).scalars().first()
+    created = inbound is None
+    if created:
+        template = presets.PRESETS_BY_KEY["vless_reality"]
+        inbound = Inbound(
+            tag=BRIDGE_TAG,
+            remark="Мост через Россию",
+            protocol=template.protocol,
+            port=BRIDGE_PORT,
+            network=template.network,
+            security=template.security,
+            listen="0.0.0.0",
+            settings=presets.build_settings(template, masking_domain=domain),
+        )
+        session.add(inbound)
+
+    dropped = [item.tag for item in node.inbounds if item is not inbound]
+    node.inbounds = [inbound]
+    node.bridge = True
+    node.probe_hidden = False
+    # Первым в списке: тем, у кого иностранные серверы не открываются, он и
+    # нужен в первую очередь.
+    node.sort_order = -1
+
+    # Свой домен у каждого моста; новый словарь — иначе JSON не сохранится.
+    settings = dict(inbound.settings or {})
+    domains = dict(masking.node_domains(settings))
+    domains[str(node.id)] = domain
+    settings[masking.NODE_DOMAINS_KEY] = domains
+    inbound.settings = settings
+    await session.flush()
+    granted = await user_service.grant_inbound_to_all(session, inbound) if created else 0
+    # Выход моста — служебный ключ: иностранные серверы должны его принимать.
+    await probe_identity.load(session, create=True)
+    return {"inbound": inbound, "created": created, "granted": granted, "dropped": dropped}
+
+
+async def unmake_bridge(session, node) -> List[str]:
+    """Вернуть мост в обычный сервер: снова все включённые подключения
+    (кроме мостового), трафик — прямо в интернет отсюда."""
+    from sqlalchemy import select
+
+    from app.models.inbound import Inbound
+    from app.services import ports
+
+    chosen = list((await session.execute(
+        select(Inbound).where(Inbound.is_enabled.is_(True), Inbound.tag != BRIDGE_TAG)
+    )).scalars().all())
+    kept, _ = ports.split_clashing(chosen, node.agent_port)
+    node.inbounds = kept
+    node.bridge = False
+    node.sort_order = 0
+    return [item.tag for item in kept]

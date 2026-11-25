@@ -270,23 +270,31 @@ AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent
   </div>
 
   <div class="body probe-bridge" id="bridge-{{ probe.id }}">
-    {% set br = panel.bridge %}
-    {% if br %}
-    <div class="who">
-      <b>Мост через Россию</b>
+    {% if panel.bridges %}
+    <b>Мост через Россию</b>
+    {% for br in panel.bridges %}
+    <div class="who" style="margin-top:6px">
+      {{ flag(br.country) }} {{ br.name }} <span class="mono muted">{{ br.address }}</span>
       {% if not br.is_enabled %}<span class="badge mute">выключен</span>
       {% elif br.status.value == 'connected' %}<span class="badge ok">работает</span>
       {% elif br.status.value == 'error' %}<span class="badge err">ошибка</span>
       {% else %}<span class="badge warn">подключается</span>{% endif %}
     </div>
-    <p class="muted" style="margin:6px 0 0">
-      В подписке он называется «{{ br.name }}». Люди подключаются к российскому IP
-      {{ br.address }}, а дальше трафик сам уходит через самый быстрый рабочий
-      иностранный сервер: сейчас выбор из {{ panel.upstreams | length }}
+    {% if br.message and br.status.value == 'error' %}<div class="node-error" style="margin-top:6px">{{ br.message }}</div>{% endif %}
+    {% endfor %}
+    <p class="muted" style="margin:8px 0 0">
+      Люди подключаются к мосту в России, а дальше трафик сам уходит через самый быстрый
+      рабочий иностранный сервер: сейчас выбор из {{ panel.upstreams | length }}
       ({{ panel.upstreams | join(', ') or 'нет ни одного' }}). Мост проверяет их раз в минуту
       и переключается сам. Серверы, убранные из подписок, в выбор не попадают.
+      Сделать мостом другой российский сервер — «Ещё» → «Сделать мостом» в списке серверов.
     </p>
-    {% if br.message and br.status.value == 'error' %}<div class="node-error" style="margin-top:8px">{{ br.message }}</div>{% endif %}
+    {% if not panel.bridge %}
+    <form method="post" action="/probes/{{ probe.id }}/bridge" style="margin-top:8px"
+          data-confirm="Сделать мост ещё и через {{ probe.name }}?">
+      <button class="small" type="submit">Сделать мост и через этот сервер</button>
+    </form>
+    {% endif %}
     {% else %}
     <b>Мост через Россию</b>
     <p class="muted" style="margin:6px 0 10px">
@@ -513,6 +521,17 @@ AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent
             <form class="inline" method="post" action="/nodes/{{ node.id }}/update-agent"
                   data-confirm="Обновить агента на {{ node.name }} до версии {{ agent_version }}? Xray перезапустится, подключения оборвутся на несколько секунд.">
               <button class="small" type="submit">Обновить агента</button>
+            </form>
+            {% endif %}
+            {% if node.bridge %}
+            <form class="inline" method="post" action="/nodes/{{ node.id }}/unbridge"
+                  data-confirm="Сделать {{ node.name }} снова обычным сервером? Трафик людей будет выходить в интернет прямо отсюда.">
+              <button class="small" type="submit">Перестать быть мостом</button>
+            </form>
+            {% else %}
+            <form class="inline" method="post" action="/nodes/{{ node.id }}/bridge"
+                  data-confirm="Сделать {{ node.name }} мостом? На нём останется одно подключение — на порту 443 с маскировкой под российский сайт, а трафик людей пойдёт дальше через рабочие иностранные серверы. Для серверов в России.">
+              <button class="small" type="submit" title="Для сервера в России: людей принимает он, а в интернет выпускает иностранный сервер">Сделать мостом</button>
             </form>
             {% endif %}
             <form class="inline" method="post" action="/nodes/{{ node.id }}/toggle">
