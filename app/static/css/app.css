@@ -685,3 +685,10 @@ input, select, textarea {
 .probe-table tr.probe-slow .probe-reason { color: var(--warn, #f5a524); }
 .probe-error { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .probe-note { font-size: 13px; }
+.probe-autofix { border-top: 1px solid var(--border); display: grid; gap: 12px; }
+.probe-autofix-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.probe-autofix-form label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.probe-hidden { display: grid; gap: 8px; }
+.probe-hidden-item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.probe-log summary { cursor: pointer; font-weight: 600; }
+.probe-log ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; }

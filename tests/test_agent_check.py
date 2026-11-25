@@ -159,3 +159,23 @@ def test_wrong_key_and_dead_server_fail(agent, internet, vpn_server):
         assert by_key[key]["tunnel"]["ok"] is False, by_key[key]
         assert by_key[key]["download"]["ok"] is False
     assert by_key["dead"]["tls"]["error"] == "порт закрыт"
+
+
+def test_reach_tells_open_closed_and_requires_token(agent):
+    _, client = agent
+    assert client.post("/reach", json={"targets": []}).status_code == 401
+    listening = socket.socket()
+    listening.bind(("127.0.0.1", 0))
+    listening.listen()
+    closed = _free_port()
+    try:
+        response = client.post("/reach", headers=AUTH, json={"targets": [
+            {"host": "127.0.0.1", "port": listening.getsockname()[1]},
+            {"host": "127.0.0.1", "port": closed},
+        ]})
+    finally:
+        listening.close()
+    assert response.status_code == 200, response.text
+    states = [item["state"] for item in response.json()["results"]]
+    assert states == ["open", "closed"]
+    assert client.post("/reach", headers=AUTH, json={"targets": [{"host": "x"}]}).status_code == 400

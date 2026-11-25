@@ -187,7 +187,7 @@ def build_user_profiles(user: User, nodes: List[Node]) -> List[Dict[str, Any]]:
     profiles: List[Dict[str, Any]] = []
 
     for node in sorted(nodes, key=lambda item: (item.sort_order, item.id)):
-        if not node.is_enabled or not user.allowed_on(node):
+        if not node.is_enabled or getattr(node, "probe_hidden", False) or not user.allowed_on(node):
             continue
         for inbound in sorted(node.inbounds, key=lambda item: item.id):
             if not inbound.is_enabled or inbound.id not in allowed_ids:

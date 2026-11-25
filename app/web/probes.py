@@ -5,11 +5,13 @@
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import web_admin
 from app.core.database import get_session
 from app.models.admin import Admin
+from app.models.node import Node
 from app.models.probe import Probe
 from app.services import probe as probe_service
 from app.services import probe_identity
@@ -113,6 +115,8 @@ async def toggle_probe(
 ):
     probe = await _get(session, probe_id)
     probe.is_enabled = not probe.is_enabled
+    if not probe.is_enabled:
+        await _unhide_all(session)
     await log_action(session, action="probe.toggle", actor=admin.username, target=probe.name,
                      target_type="probe", message="включён" if probe.is_enabled else "выключен")
     await session.commit()
@@ -131,6 +135,7 @@ async def delete_probe(
     await log_action(session, action="probe.delete", actor=admin.username,
                      target=probe.name, target_type="probe")
     await session.delete(probe)
+    await _unhide_all(session)
     await session.commit()
     trigger_sync()
     return _back()
@@ -152,5 +157,50 @@ async def update_probe_agent(
         probe.status, probe.message = "error", str(exc)
     await log_action(session, action="probe.update_agent", actor=admin.username,
                      target=probe.name, target_type="probe", message=probe.message)
+    await session.commit()
+    return _back()
+
+
+async def _unhide_all(session: AsyncSession) -> None:
+    for node in (await session.execute(select(Node).where(Node.probe_hidden.is_(True)))).scalars():
+        node.probe_hidden = False
+
+
+@router.post("/{probe_id}/autofix")
+async def autofix_probe(
+    probe_id: int,
+    auto_hide: bool = Form(default=False),
+    auto_port: bool = Form(default=False),
+    auto_domain: bool = Form(default=False),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Что зонд исправляет сам."""
+    probe = await _get(session, probe_id)
+    probe.auto_hide, probe.auto_port, probe.auto_domain = auto_hide, auto_port, auto_domain
+    if not auto_hide:
+        # Выключили автоскрытие — всё скрытое возвращаем в подписки сразу.
+        await _unhide_all(session)
+    flags = [name for name, on in (("скрывать", auto_hide), ("порт", auto_port),
+                                   ("домен", auto_domain)) if on]
+    await log_action(session, action="probe.autofix", actor=admin.username, target=probe.name,
+                     target_type="probe", message=", ".join(flags) or "всё выключено")
+    await session.commit()
+    return _back()
+
+
+@router.post("/unhide/{node_id}")
+async def unhide_node(
+    node_id: int,
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Вернуть сервер в подписки вручную, не дожидаясь зонда."""
+    node = await session.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сервер не найден")
+    node.probe_hidden = False
+    await log_action(session, action="probe.unhide", actor=admin.username, target=node.name,
+                     target_type="node", message="возвращён в подписки вручную")
     await session.commit()
     return _back()

@@ -136,7 +136,11 @@ async def _probe_panels(session: AsyncSession, nodes: List[Node]) -> List[Dict]:
     from app.models.probe import Probe
     from app.services import probe as probe_service
 
+    from app.services.agent_source import bundled_version, read_source
+
     order = {node.id: index for index, node in enumerate(nodes)}
+    hidden = {node.id for node in nodes if node.probe_hidden}
+    latest = max(bundled_version(read_source()), probe_service.PROBE_AGENT_VERSION)
     panels = []
     for probe in (await session.execute(select(Probe).order_by(Probe.id))).scalars().all():
         rows = []
@@ -145,6 +149,7 @@ async def _probe_panels(session: AsyncSession, nodes: List[Node]) -> List[Dict]:
             row["checked"] = _parse_time(entry.get("checked_at"))
             row["last_ok"] = _parse_time(entry.get("last_ok_at"))
             row["domain"] = (probe.domains or {}).get(entry.get("sni") or "")
+            row["hidden"] = entry.get("node_id") in hidden
             rows.append(row)
         rows.sort(key=lambda row: (order.get(row.get("node_id"), 10**6), row["key"]))
         panels.append({
@@ -152,8 +157,12 @@ async def _probe_panels(session: AsyncSession, nodes: List[Node]) -> List[Dict]:
             "rows": rows,
             "summary": probe_service.summary(probe),
             "running": probe.id in probe_service.running,
-            "outdated": bool(probe.last_seen_at)
-            and (probe.agent_version or 0) < probe_service.PROBE_AGENT_VERSION,
+            "outdated": bool(probe.last_seen_at) and (probe.agent_version or 0) < latest,
+            "log": [
+                dict(item, at=_parse_time(item.get("at")))
+                for item in (probe.fixes or {}).get("log", [])[:10]
+            ],
+            "hidden": [node for node in nodes if node.probe_hidden],
         })
     return panels
 

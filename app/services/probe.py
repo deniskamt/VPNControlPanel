@@ -29,12 +29,14 @@ from app.models.inbound import Host, Inbound
 from app.models.node import Node
 from app.models.probe import Probe
 from app.models.user import User
-from app.services import client_config, masking, notifier, probe_identity
+from app.services import client_config, masking, notifier, probe_fix, probe_identity
 from app.services.links import _effective_security
 from app.services.node_client import NodeClient, NodeError
 
 # Агент, который умеет /check.
 PROBE_AGENT_VERSION = 8
+# Агент, который умеет /reach — нужен для подбора нового порта.
+REACH_AGENT_VERSION = 9
 # Сколько провалов подряд, прежде чем писать в Telegram: одиночный сбой
 # бывает и у здорового сервера (перезапуск ядра, моргнула сеть).
 ALERT_AFTER = 2
@@ -249,7 +251,8 @@ async def _run(session: AsyncSession, probe: Probe, load_nodes) -> None:
         return
 
     identity = await probe_identity.load(session, create=True)
-    targets = build_targets(await load_nodes(session), identity)
+    nodes = await load_nodes(session)
+    targets = build_targets(nodes, identity)
     now = datetime.utcnow().replace(microsecond=0).isoformat()
     try:
         answer = await client.check([
@@ -290,6 +293,39 @@ async def _run(session: AsyncSession, probe: Probe, load_nodes) -> None:
     logger.info(f"Зонд {probe.name}: проверено {len(merged)}, не работает {bad}")
     if events:
         notifier.notify_background(alert_text(probe.name, events))
+    await heal(session, probe, client, nodes, merged)
+
+
+async def heal(session: AsyncSession, probe: Probe, client: NodeClient, nodes, merged) -> None:
+    """Исправить то, что можно исправить без человека (см. probe_fix)."""
+    todo = probe_fix.plan(
+        nodes, merged, probe.fixes or {},
+        auto_hide=probe.auto_hide, auto_port=probe.auto_port, auto_domain=probe.auto_domain,
+    )
+    if todo.move_ports and (probe.agent_version or 0) < REACH_AGENT_VERSION:
+        for inbound_id, _ in todo.move_ports:
+            todo.notes[f"port-agent:{inbound_id}"] = (
+                "порт подключения режут из России, но агент зонда не умеет подбирать "
+                f"новый порт — обновите его до версии {REACH_AGENT_VERSION} кнопкой «Обновить агента»"
+            )
+        todo.move_ports = []
+    try:
+        done, fresh = await probe_fix.apply(client, probe, nodes, todo)
+    except Exception as exc:  # noqa: BLE001 — самолечение не должно ронять проверку
+        logger.exception(f"Зонд {probe.name}: самолечение упало: {exc}")
+        await session.rollback()
+        return
+    await session.commit()
+    if done or fresh:
+        notifier.notify_background(probe_fix.report(probe.name, done, fresh))
+    if done:
+        from app.services.worker import trigger_sync
+
+        logger.info(f"Зонд {probe.name}: исправлено сам — {len(done)}")
+        trigger_sync()
+        if todo.config_changed:
+            # Проверить, помогло ли, когда серверы примут новый конфиг.
+            run_in_background(probe.id, delay=probe_fix.RECHECK_DELAY)
 
 
 CONTROL_TIMEOUT = 5
@@ -339,11 +375,13 @@ async def run_all(session: AsyncSession) -> None:
         await run(session, probe)
 
 
-def run_in_background(probe_id: int) -> None:
+def run_in_background(probe_id: int, delay: float = 0) -> None:
     """«Проверить сейчас»: прогон занимает до пары минут, страницу не ждём."""
     from app.core.database import session_scope
 
     async def go() -> None:
+        if delay:
+            await asyncio.sleep(delay)
         try:
             async with session_scope() as session:
                 probe = await session.get(Probe, probe_id)

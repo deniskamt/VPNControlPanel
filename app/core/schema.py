@@ -28,6 +28,11 @@ COLUMNS: List[Tuple[str, str, str]] = [
     ("user_node_access", "online_at", "TIMESTAMP WITHOUT TIME ZONE"),
     ("nodes", "access_mode", "VARCHAR(16) DEFAULT 'all' NOT NULL"),
     ("user_node_access", "granted", "BOOLEAN DEFAULT FALSE NOT NULL"),
+    ("nodes", "probe_hidden", "BOOLEAN DEFAULT FALSE NOT NULL"),
+    ("probes", "auto_hide", "BOOLEAN DEFAULT TRUE NOT NULL"),
+    ("probes", "auto_port", "BOOLEAN DEFAULT TRUE NOT NULL"),
+    ("probes", "auto_domain", "BOOLEAN DEFAULT TRUE NOT NULL"),
+    ("probes", "fixes", "JSONB DEFAULT '{}'::jsonb NOT NULL"),
 ]
 
 

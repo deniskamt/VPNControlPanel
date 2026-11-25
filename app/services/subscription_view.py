@@ -133,6 +133,10 @@ def hidden_entries(user: User, nodes: List[Node]) -> List[dict]:
         if not node.is_enabled:
             reasons.append({"what": node.name, "why": "сервер выключен"})
             continue
+        if getattr(node, "probe_hidden", False):
+            reasons.append({"what": node.name,
+                            "why": "убран зондом: IP заблокирован в России, вернётся сам"})
+            continue
         if not user.allowed_on(node):
             access = user.access_for(node.id)
             private_only = node.is_private and not (access and access.blocked)

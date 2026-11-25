@@ -176,6 +176,19 @@ class NodeClient:
             ),
         )
 
+    async def reach(self, targets: list) -> Dict[str, Any]:
+        """Зонд: доходит ли TCP до портов серверов (open/closed/timeout)."""
+        return await self._request(
+            "POST",
+            "/reach",
+            json={"targets": targets},
+            timeout=max(self.timeout, 30),
+            missing_hint=(
+                "агент на зонде старее версии 9 и не умеет проверять порты. "
+                "Обновите его кнопкой «Обновить агента»"
+            ),
+        )
+
     async def update_xray(self, version: str) -> Dict[str, Any]:
         """Поставить на ноду другую версию ядра Xray — с проверкой и откатом."""
         return await self._request(

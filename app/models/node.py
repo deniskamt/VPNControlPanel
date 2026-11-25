@@ -74,6 +74,9 @@ class Node(Base, TimestampMixin):
         default=NodeAccessMode.all,
         server_default=NodeAccessMode.all.value,
     )
+    # Зонд убрал сервер из подписок: из России IP заблокирован. Сервер
+    # продолжает работать и проверяться, и вернётся сам, когда заработает.
+    probe_hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Коэффициент учёта трафика (например, дорогая нода = 2.0).
     usage_coefficient: Mapped[float] = mapped_column(Float, default=1.0)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)

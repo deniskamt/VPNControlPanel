@@ -44,7 +44,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 
 # Версия агента. Увеличивается при каждом изменении этого файла: панель
 # сравнивает её со своей и показывает, на каких нодах агент устарел.
-AGENT_VERSION = 8
+AGENT_VERSION = 9
 
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")
 AGENT_HOST = os.getenv("AGENT_HOST", "0.0.0.0")
@@ -1258,6 +1258,43 @@ def check(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         raise HTTPException(500, f"нет ядра {XRAY_BIN}: переустановите агента")
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, CHECK_WORKERS)) as pool:
         results = list(pool.map(check_target, targets))
+    return {"results": results, "agent_version": AGENT_VERSION}
+
+
+REACH_LIMIT = 256
+REACH_TIMEOUT = float(os.getenv("REACH_TIMEOUT", "5"))
+
+
+def reach_one(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Доходит ли TCP до порта. «closed» (сервер ответил отказом) — тоже
+    хороший знак: путь открыт, просто там никто не слушает. Плохо — timeout:
+    по дороге пакеты глушат (блокировка или файрвол)."""
+    host, port = str(item.get("host") or ""), int(item.get("port") or 0)
+    result: Dict[str, Any] = {"host": host, "port": port, "state": "error", "ms": None}
+    started = time.monotonic()
+    try:
+        with socket.create_connection((host, port), timeout=REACH_TIMEOUT):
+            result["state"] = "open"
+    except socket.timeout:
+        result["state"] = "timeout"
+    except ConnectionRefusedError:
+        result["state"] = "closed"
+    except OSError as exc:
+        result["error"] = _network_error(exc)
+    result["ms"] = round((time.monotonic() - started) * 1000)
+    return result
+
+
+@app.post("/reach", dependencies=[Depends(require_token)])
+def reach(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Проверить, доходят ли соединения до портов отсюда — параллельно."""
+    items = []
+    for item in (payload.get("targets") or [])[:REACH_LIMIT]:
+        if not isinstance(item, dict) or not item.get("host") or not item.get("port"):
+            raise HTTPException(400, "каждая цель — объект с host и port")
+        items.append(item)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
+        results = list(pool.map(reach_one, items))
     return {"results": results, "agent_version": AGENT_VERSION}
 
 

@@ -226,6 +226,40 @@ AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent
     </form>
   </div>
 
+  <div class="body probe-autofix">
+    <form method="post" action="/probes/{{ probe.id }}/autofix" class="probe-autofix-form">
+      <b>Исправлять самому:</b>
+      <label title="Если до порта подключения из России не доходит, а остальные порты сервера открыты — перенести подключение на свободный порт, который проходит"><input type="checkbox" name="auto_port" {% if probe.auto_port %}checked{% endif %}> порт</label>
+      <label title="Если рукопожатие проходит, а данные режут — подобрать серверу новый маскировочный домен: соседа по подсети или из каталога, который открывается из России"><input type="checkbox" name="auto_domain" {% if probe.auto_domain %}checked{% endif %}> маскировочный домен</label>
+      <label title="Если IP сервера заблокирован в России — убрать сервер из подписок, пока не заработает. Больше половины серверов разом не скрывается"><input type="checkbox" name="auto_hide" {% if probe.auto_hide %}checked{% endif %}> скрывать заблокированные серверы</label>
+      <button class="small" type="submit">Сохранить</button>
+    </form>
+    {% if panel.hidden %}
+    <div class="probe-hidden">
+      {% for node in panel.hidden %}
+      <div class="probe-hidden-item">
+        <span class="badge warn">убран из подписок</span>
+        {{ flag(node.country) }} <b>{{ node.name }}</b>
+        <span class="muted">— IP заблокирован в России, вернётся сам, когда заработает. Нужен новый IP у хостинга.</span>
+        <form class="inline" method="post" action="/probes/unhide/{{ node.id }}">
+          <button class="small" type="submit">Вернуть сейчас</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if panel.log %}
+    <details class="probe-log" {% if panel.log and panel.log[0].at and (now() - panel.log[0].at).total_seconds() < 86400 %}open{% endif %}>
+      <summary>Что зонд исправил сам</summary>
+      <ul>
+        {% for item in panel.log %}
+        <li><span class="muted nowrap">{{ item.at | ago }}</span> — {{ item.text }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  </div>
+
   {% if panel.rows %}
   <div class="table-wrap">
     <table class="probe-table">
@@ -243,7 +277,7 @@ AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent
       {% for row in panel.rows %}
         <tr class="probe-{{ row.state }}">
           <td>
-            <div class="who">{{ flag(row.country) }} {{ row.node }}</div>
+            <div class="who">{{ flag(row.country) }} {{ row.node }}{% if row.hidden %} <span class="badge warn">не в подписке</span>{% endif %}</div>
             <div class="muted sub-line">{{ row.inbound }} · {{ row.transport }}</div>
             <div class="muted sub-line mono">{{ row.address }}</div>
             {% if row.state != 'ok' %}
@@ -270,8 +304,8 @@ AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent
     Проверка идёт из сети дата-центра. Мобильные операторы фильтруют жёстче,
     поэтому «работает» здесь ещё не гарантия, что работает в мобильном интернете,
     а «не работает» почти наверняка значит, что не работает и у людей.
-    Hysteria2 зонд пока не проверяет. Если сервер не работает, а сам домен из России
-    открывается — обычно помогает сменить маскировочный домен этого сервера.
+    Hysteria2 зонд пока не проверяет. Подтверждённой считается поломка, которая
+    повторилась две проверки подряд — только её зонд и исправляет.
   </div>
   {% elif probe.last_run_at %}
   <div class="empty">Проверять нечего: нет включённых подключений на серверах</div>

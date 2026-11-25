@@ -40,6 +40,12 @@ class Probe(Base, TimestampMixin):
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     results: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
     domains: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Самолечение: что зонд может исправлять сам (см. app/services/probe_fix.py).
+    auto_hide: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    auto_port: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    auto_domain: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # Память самолечения: что и когда меняли, какие домены не помогли, журнал.
+    fixes: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
 
     # NodeClient умеет говорить с любым агентом: ему нужны только эти поля.
     @property

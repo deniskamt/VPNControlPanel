@@ -1,0 +1,254 @@
+"""Самолечение зонда: что он решает исправлять по результатам проверки.
+
+Сценарий взят из живой проверки: порт 443 (XHTTP) режут из России на всех
+серверах, 2053 (VISION) проходит; у двух серверов IP заблокирован целиком.
+"""
+
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+
+from app.models.enums import NodeStatus, ProxyType, SecurityType
+from app.services import probe_fix
+
+NOW = datetime(2026, 11, 25, 15, 0)
+
+
+def inbound(inbound_id, tag, port):
+    return SimpleNamespace(id=inbound_id, tag=tag, port=port, protocol=ProxyType.vless,
+                           listen="0.0.0.0", is_enabled=True, hosts=[],
+                           security=SecurityType.reality, settings={})
+
+
+VISION = inbound(1, "VLESS-REALITY-VISION", 2053)
+XHTTP = inbound(2, "VLESS-REALITY-XHTTP", 443)
+
+
+def node(node_id, hidden=False, status=NodeStatus.connected):
+    return SimpleNamespace(id=node_id, name=f"N{node_id}", is_enabled=True, probe_hidden=hidden,
+                           status=status, inbounds=[VISION, XHTTP], agent_port=8443,
+                           address=f"10.0.0.{node_id}")
+
+
+def ok(sni="d.example"):
+    return {"state": "ok", "fail_streak": 0, "security": "reality", "sni": sni,
+            "tls": {"ok": True}, "tunnel": {"ok": True}, "download": {"ok": True}}
+
+
+def port_cut(sni="d.example", streak=2):
+    """До порта не доходит даже TCP, из Европы — доходит."""
+    return {"state": "fail", "fail_streak": streak, "security": "reality", "sni": sni,
+            "tls": {"ok": False, "error": "таймаут"}, "tunnel": {"ok": False},
+            "control": {"ok": True}}
+
+
+def sni_cut(sni="d.example", streak=2):
+    """Рукопожатие есть, данные режут."""
+    return {"state": "fail", "fail_streak": streak, "security": "reality", "sni": sni,
+            "tls": {"ok": True}, "tunnel": {"ok": False, "error": "таймаут"}}
+
+
+def results(per_node):
+    merged = {}
+    for node_id, (vision, xhttp) in per_node.items():
+        merged[f"{node_id}:1:0"] = dict(vision, node=f"N{node_id}")
+        merged[f"{node_id}:2:0"] = dict(xhttp, node=f"N{node_id}")
+    return merged
+
+
+def test_live_case_moves_port_and_hides_blocked_servers():
+    nodes = [node(i) for i in range(1, 8)]
+    merged = results({
+        1: (ok(), port_cut()), 2: (ok(), port_cut()), 3: (ok(), port_cut()),
+        4: (ok(), port_cut()), 5: (ok(), port_cut()),
+        6: (port_cut(), port_cut()),   # IP заблокирован
+        7: (port_cut(), port_cut()),   # IP заблокирован
+    })
+    todo = probe_fix.plan(nodes, merged, {}, now=NOW)
+    assert todo.move_ports == [(2, [1, 2, 3, 4, 5])]
+    assert sorted(todo.hide) == [6, 7]
+    assert todo.rotate_domains == []
+    assert "ip:6" in todo.notes and "нужен новый IP" in todo.notes["ip:6"]
+
+
+def test_single_unconfirmed_failure_changes_nothing():
+    nodes = [node(1), node(2)]
+    merged = results({1: (ok(), port_cut(streak=1)), 2: (port_cut(streak=1), port_cut(streak=1))})
+    todo = probe_fix.plan(nodes, merged, {}, now=NOW)
+    assert todo.empty
+
+
+def test_port_cut_on_one_server_only_is_not_moved_for_everyone():
+    nodes = [node(i) for i in range(1, 5)]
+    merged = results({1: (ok(), port_cut()), 2: (ok(), ok()), 3: (ok(), ok()), 4: (ok(), ok())})
+    todo = probe_fix.plan(nodes, merged, {}, now=NOW)
+    assert todo.move_ports == []
+    assert "port:2:1" in todo.notes
+
+
+def test_port_cooldown():
+    nodes = [node(1), node(2)]
+    merged = results({1: (ok(), port_cut()), 2: (ok(), port_cut())})
+    history = {"inbounds": {"2": {"at": (NOW - timedelta(hours=1)).isoformat()}}}
+    assert probe_fix.plan(nodes, merged, history, now=NOW).move_ports == []
+    history = {"inbounds": {"2": {"at": (NOW - timedelta(hours=7)).isoformat()}}}
+    assert probe_fix.plan(nodes, merged, history, now=NOW).move_ports == [(2, [1, 2])]
+
+
+def test_handshake_ok_but_data_cut_rotates_domain():
+    nodes = [node(1), node(2)]
+    merged = results({1: (sni_cut("bad.example"), sni_cut("bad.example")), 2: (ok(), ok())})
+    todo = probe_fix.plan(nodes, merged, {}, now=NOW)
+    assert todo.rotate_domains == [(1, "bad.example")]
+    assert todo.hide == []
+
+
+def test_domain_kept_when_it_works_on_another_connection():
+    nodes = [node(1)]
+    merged = results({1: (ok("same.example"), sni_cut("same.example"))})
+    assert probe_fix.plan(nodes, merged, {}, now=NOW).rotate_domains == []
+
+
+def test_domain_rotation_limits():
+    nodes = [node(1)]
+    merged = results({1: (sni_cut(), sni_cut())})
+    recent = {"nodes": {"1": {"domain_changes": [(NOW - timedelta(minutes=5)).isoformat()]}}}
+    assert probe_fix.plan(nodes, merged, recent, now=NOW).rotate_domains == []
+
+    three = {"nodes": {"1": {"domain_changes": [
+        (NOW - timedelta(hours=h)).isoformat() for h in (1, 2, 3)]}}}
+    todo = probe_fix.plan(nodes, merged, three, now=NOW)
+    assert todo.rotate_domains == [] and "domain-limit:1" in todo.notes
+
+
+def test_disconnected_server_is_not_touched():
+    # Сервер не принял конфиг — ключа проверки на нём может не быть.
+    nodes = [node(1, status=NodeStatus.error)]
+    merged = results({1: (sni_cut(), sni_cut())})
+    assert probe_fix.plan(nodes, merged, {}, now=NOW).rotate_domains == []
+
+
+def test_too_many_blocked_means_probe_problem():
+    nodes = [node(i) for i in range(1, 4)]
+    merged = results({1: (port_cut(), port_cut()), 2: (port_cut(), port_cut()), 3: (ok(), ok())})
+    todo = probe_fix.plan(nodes, merged, {}, now=NOW)
+    assert todo.hide == [] and "hide:too-many" in todo.notes
+
+
+def test_last_visible_server_is_never_hidden():
+    nodes = [node(1), node(2, hidden=True), node(3, hidden=True), node(4)]
+    merged = results({1: (port_cut(), port_cut()), 2: (port_cut(), port_cut()),
+                      3: (ok(), ok()), 4: (ok(), ok())})
+    todo = probe_fix.plan(nodes, merged, {}, now=NOW)
+    # №3 снова работает и возвращается — тогда №1 прятать можно.
+    assert todo.unhide == [3] and todo.hide == [1]
+
+    nodes = [node(1), node(2, hidden=True)]
+    merged = results({1: (port_cut(), port_cut()), 2: (port_cut(), port_cut())})
+    todo = probe_fix.plan(nodes, merged, {}, now=NOW)
+    assert todo.hide == []
+
+
+def test_hidden_server_returns_when_it_works_or_autohide_is_off():
+    nodes = [node(1, hidden=True), node(2)]
+    still_blocked = results({1: (port_cut(), port_cut()), 2: (ok(), ok())})
+    assert probe_fix.plan(nodes, still_blocked, {}, now=NOW).unhide == []
+    assert probe_fix.plan(nodes, still_blocked, {}, auto_hide=False, now=NOW).unhide == [1]
+    works = results({1: (ok(), port_cut()), 2: (ok(), ok())})
+    assert probe_fix.plan(nodes, works, {}, now=NOW).unhide == [1]
+
+
+def test_switches_turn_fixes_off():
+    nodes = [node(i) for i in range(1, 8)]
+    merged = results({**{i: (ok(), port_cut()) for i in range(1, 6)},
+                      6: (port_cut(), port_cut()), 7: (sni_cut(), sni_cut())})
+    todo = probe_fix.plan(nodes, merged, {}, auto_hide=False, auto_port=False,
+                          auto_domain=False, now=NOW)
+    assert todo.empty
+
+
+class FakeProbeAgent:
+    """Зонд: 2083 из России проходит (сервер отвечает отказом), 2087 глушат."""
+
+    def __init__(self):
+        self.asked = []
+
+    async def reach(self, targets):
+        self.asked.append(targets)
+        return {"results": [
+            {"host": t["host"], "port": t["port"],
+             "state": "closed" if t["port"] == 2083 else "timeout"} for t in targets
+        ]}
+
+
+def test_apply_moves_port_to_one_that_passes(monkeypatch):
+    import asyncio
+
+    async def panel_reach(host, port):
+        return "closed"
+
+    monkeypatch.setattr(probe_fix, "_panel_reach", panel_reach)
+    xhttp = inbound(2, "VLESS-REALITY-XHTTP", 443)
+    vision = inbound(1, "VLESS-REALITY-VISION", 2053)
+    nodes = []
+    for i in (1, 2, 3):
+        n = node(i)
+        n.inbounds = [vision, xhttp]
+        nodes.append(n)
+    agent = FakeProbeAgent()
+    probe = SimpleNamespace(fixes={}, auto_hide=True)
+    todo = probe_fix.Plan(move_ports=[(2, [1, 2])], hide=[3])
+    done, _ = asyncio.run(probe_fix.apply(agent, probe, nodes, todo, now=NOW))
+
+    assert xhttp.port == 2083            # 2053 занят VISION, 2083 проходит
+    assert nodes[2].probe_hidden is True
+    assert todo.config_changed
+    # Заблокированный №3 в проверку порта из России не попадает.
+    assert {t["host"] for t in agent.asked[-1]} == {"10.0.0.1", "10.0.0.2"}
+    assert probe.fixes["inbounds"]["2"]["from"] == 443
+    assert any("443 → 2083" in line for line in done)
+    assert probe.fixes["log"][0]["text"] in done
+    assert "исправил сам" in probe_fix.report("Россия", done, [])
+
+
+def test_apply_rotates_domain_only_where_it_was_used(monkeypatch):
+    import asyncio
+
+    picked = {}
+
+    async def pick(client, node_obj, nodes, avoid):
+        picked["avoid"] = avoid
+        return "fresh.example"
+
+    monkeypatch.setattr(probe_fix, "_pick_domain", pick)
+    shared = {"serverNames": ["common.example"], "nodeDomains": {"1": "bad.example"}}
+    vision = inbound(1, "VLESS-REALITY-VISION", 2053)
+    vision.settings = dict(shared)
+    xhttp = inbound(2, "VLESS-REALITY-XHTTP", 443)
+    xhttp.settings = {"serverNames": ["other.example"]}
+    first, second = node(1), node(2)
+    first.inbounds = second.inbounds = [vision, xhttp]
+    probe = SimpleNamespace(fixes={}, auto_hide=True)
+    todo = probe_fix.Plan(rotate_domains=[(1, "bad.example")])
+    done, _ = asyncio.run(probe_fix.apply(object(), probe, [first, second], todo, now=NOW))
+
+    assert vision.settings["nodeDomains"] == {"1": "fresh.example"}
+    assert "nodeDomains" not in xhttp.settings          # там был другой домен
+    assert "bad.example" in picked["avoid"]             # плохой домен не вернётся
+    assert probe.fixes["nodes"]["1"]["bad_domains"] == ["bad.example"]
+    assert any("bad.example → fresh.example" in line for line in done)
+
+
+def test_unfixable_is_reported_once():
+    import asyncio
+
+    probe = SimpleNamespace(fixes={}, auto_hide=True)
+    todo = probe_fix.Plan(notes={"ip:6": "N6: IP заблокирован"})
+    _, fresh = asyncio.run(probe_fix.apply(object(), probe, [], todo, now=NOW))
+    assert fresh == ["N6: IP заблокирован"]
+    todo = probe_fix.Plan(notes={"ip:6": "N6: IP заблокирован"})
+    _, fresh = asyncio.run(probe_fix.apply(object(), probe, [], todo, now=NOW))
+    assert fresh == []
+    # Проблема ушла и вернулась — снова сообщаем.
+    asyncio.run(probe_fix.apply(object(), probe, [], probe_fix.Plan(), now=NOW))
+    _, fresh = asyncio.run(probe_fix.apply(object(), probe, [], probe_fix.Plan(notes={"ip:6": "x"}), now=NOW))
+    assert fresh == ["x"]

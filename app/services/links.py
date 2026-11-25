@@ -268,7 +268,7 @@ def user_rows(
     rows: List[tuple] = []
 
     for node in nodes:
-        if not node.is_enabled:
+        if not node.is_enabled or getattr(node, "probe_hidden", False):
             continue
         # Закрытый для пользователя сервер не должен появляться в подписке:
         # иначе клиент будет упорно долбиться в него и показывать ошибки.
