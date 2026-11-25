@@ -219,7 +219,9 @@ def allowed_users_by_inbound(node: Node, users: Iterable[User]) -> Dict[int, Lis
     return allowed
 
 
-def build_node_config(node: Node, users: Iterable[User]) -> Dict[str, Any]:
+def build_node_config(
+    node: Node, users: Iterable[User], probe: Optional[User] = None
+) -> Dict[str, Any]:
     """Полный конфиг Xray для ноды: служебный api + все её inbound'ы.
 
     В конфиг попадают только те, кому этот сервер сейчас положен: активные,
@@ -228,6 +230,9 @@ def build_node_config(node: Node, users: Iterable[User]) -> Dict[str, Any]:
     пользователь видит, но ключа на сервере нет.
     """
     allowed_by_inbound = allowed_users_by_inbound(node, users)
+    # Ключ зонда (проверка из другой страны) — на каждом подключении сервера,
+    # независимо от доступа пользователей: зонд проверяет все серверы.
+    extra = [probe] if probe is not None else []
 
     inbounds: List[Dict[str, Any]] = [
         {
@@ -246,7 +251,7 @@ def build_node_config(node: Node, users: Iterable[User]) -> Dict[str, Any]:
         if inbound.protocol == ProxyType.hysteria2:
             continue
         inbounds.append(
-            build_inbound(inbound, allowed_by_inbound.get(inbound.id, []), node.id)
+            build_inbound(inbound, allowed_by_inbound.get(inbound.id, []) + extra, node.id)
         )
 
     return {

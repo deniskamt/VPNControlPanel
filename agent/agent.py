@@ -44,7 +44,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 
 # Версия агента. Увеличивается при каждом изменении этого файла: панель
 # сравнивает её со своей и показывает, на каких нодах агент устарел.
-AGENT_VERSION = 7
+AGENT_VERSION = 8
 
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")
 AGENT_HOST = os.getenv("AGENT_HOST", "0.0.0.0")
@@ -1059,6 +1059,206 @@ def update_xray(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
             xray.restart()
         raise HTTPException(400, f"Xray {version} не запустился, возвращена прежняя версия: {reason}")
     return {"ok": True, "previous": before, "xray_version": xray.version()}
+
+
+# --- Зонд: проверка серверов глазами пользователя ----------------------------
+#
+# Агент, поставленный на сервер в другой стране (например, в России), может
+# работать зондом: панель присылает ему исходящие соединения Xray — ровно
+# такие, как в подписке пользователя, — и он по очереди подключается через
+# каждый сервер. Так видно, работает ли VPN там, где живут пользователи, а не
+# только «сервер включён».
+#
+# Для каждой цели три проверки:
+#   tls      — TLS-рукопожатие с сервером под маскировочным SNI: доходит ли
+#              соединение вообще (ТСПУ рвёт его ещё до туннеля);
+#   tunnel   — запрос через туннель: поднимается ли подключение на самом деле;
+#   download — загрузка ~1 МБ через туннель: не «замерзает» ли соединение
+#              после первых килобайт, как бывает при фильтрации 2026 года.
+
+CHECK_URL = os.getenv("CHECK_URL", "https://www.gstatic.com/generate_204")
+CHECK_DOWNLOAD_URL = os.getenv(
+    "CHECK_DOWNLOAD_URL", "https://speed.cloudflare.com/__down?bytes=1000000"
+)
+CHECK_DOWNLOAD_BYTES = int(os.getenv("CHECK_DOWNLOAD_BYTES", "1000000"))
+CHECK_LIMIT = 64
+CHECK_WORKERS = int(os.getenv("CHECK_WORKERS", "4"))
+CHECK_TLS_TIMEOUT = 8.0
+CHECK_TUNNEL_TIMEOUT = 15
+CHECK_DOWNLOAD_TIMEOUT = 25
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _network_error(exc: BaseException) -> str:
+    if isinstance(exc, socket.timeout):
+        return "таймаут"
+    if isinstance(exc, ConnectionResetError):
+        return "соединение сброшено"
+    if isinstance(exc, ConnectionRefusedError):
+        return "порт закрыт"
+    if isinstance(exc, ssl.SSLError):
+        return f"TLS не сложился: {getattr(exc, 'reason', '') or exc}"
+    if isinstance(exc, OSError):
+        return exc.strerror or str(exc)
+    return str(exc)
+
+
+def check_tls(host: str, port: int, sni: str) -> Dict[str, Any]:
+    """Рукопожатие TLS с сервером под тем SNI, что стоит в подписке.
+
+    Сертификат не проверяем: у REALITY это сертификат маскировочного сайта,
+    у TLS-подключения — свой. Важно одно: доходит ли рукопожатие.
+    """
+    result: Dict[str, Any] = {"ok": False, "ms": None, "error": ""}
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    started = time.monotonic()
+    try:
+        with socket.create_connection((host, port), timeout=CHECK_TLS_TIMEOUT) as raw:
+            with context.wrap_socket(raw, server_hostname=sni or None) as tls:
+                result["ms"] = round((time.monotonic() - started) * 1000)
+                result["version"] = tls.version()
+                result["ok"] = True
+    except Exception as exc:  # noqa: BLE001 — любая сетевая беда и есть результат
+        result["error"] = _network_error(exc)
+    return result
+
+
+def _curl(port: int, url: str, max_time: int) -> Dict[str, Any]:
+    """Запрос через локальный SOCKS-порт Xray. curl, а не urllib: в
+    стандартной библиотеке нет SOCKS, а curl есть на любом сервере."""
+    # --noproxy "" обязателен: иначе curl по переменной NO_PROXY пойдёт к
+    # адресу напрямую, мимо туннеля, и проверка «пройдёт» на мёртвом сервере.
+    command = [
+        "curl", "-sS", "-o", "/dev/null", "--noproxy", "",
+        "--socks5-hostname", f"127.0.0.1:{port}",
+        "-m", str(max_time), "-w", "%{http_code} %{time_total} %{size_download}", url,
+    ]
+    env = {key: value for key, value in os.environ.items()
+           if key.lower() not in ("no_proxy", "http_proxy", "https_proxy", "all_proxy")}
+    try:
+        done = subprocess.run(command, capture_output=True, text=True,
+                              timeout=max_time + 5, env=env)
+    except FileNotFoundError:
+        return {"ok": False, "error": "на сервере нет curl"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "таймаут"}
+    parts = (done.stdout or "").split()
+    code = int(parts[0]) if parts and parts[0].isdigit() else 0
+    seconds = float(parts[1]) if len(parts) > 1 else 0.0
+    size = int(float(parts[2])) if len(parts) > 2 else 0
+    error = (done.stderr or "").strip().splitlines()[-1][:200] if done.stderr else ""
+    if error.startswith("curl: "):
+        error = error[6:]
+    return {"code": code, "ms": round(seconds * 1000), "bytes": size,
+            "ok": done.returncode == 0 and 200 <= code < 400, "error": error}
+
+
+def _wait_port(port: int, process: subprocess.Popen, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return False
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+                return True
+        except OSError:
+            time.sleep(0.1)
+    return False
+
+
+def check_tunnel(outbound: Dict[str, Any]) -> Dict[str, Any]:
+    """Поднять Xray-клиент с этим исходящим и сходить через него в интернет."""
+    result: Dict[str, Any] = {
+        "tunnel": {"ok": False, "ms": None, "error": ""},
+        "download": {"ok": False, "ms": None, "bytes": 0, "error": ""},
+    }
+    port = _free_port()
+    outbound = dict(outbound, tag="proxy")
+    config = {
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "listen": "127.0.0.1", "port": port, "protocol": "socks",
+            "settings": {"auth": "noauth", "udp": False},
+        }],
+        "outbounds": [outbound],
+    }
+    with tempfile.TemporaryDirectory(prefix="vpn-check-") as tmp:
+        path = Path(tmp) / "config.json"
+        log = Path(tmp) / "xray.log"
+        path.write_text(json.dumps(config), encoding="utf-8")
+        env = dict(os.environ, XRAY_LOCATION_ASSET=XRAY_ASSETS)
+        with open(log, "wb") as out:
+            try:
+                process = subprocess.Popen(
+                    [XRAY_BIN, "run", "-config", str(path)],
+                    env=env, stdout=out, stderr=subprocess.STDOUT,
+                )
+            except OSError as exc:
+                result["tunnel"]["error"] = f"не запустить xray: {exc}"
+                return result
+            try:
+                if not _wait_port(port, process):
+                    text = log.read_text("utf-8", errors="replace")
+                    result["tunnel"]["error"] = (
+                        "Xray-клиент не поднялся: " + (_meaningful_output(text, 300) or "без вывода")
+                    )
+                    return result
+                tunnel = _curl(port, CHECK_URL, CHECK_TUNNEL_TIMEOUT)
+                result["tunnel"] = {"ok": tunnel["ok"], "ms": tunnel.get("ms"),
+                                    "error": tunnel.get("error", "")}
+                if not tunnel["ok"] and not tunnel.get("error"):
+                    result["tunnel"]["error"] = f"ответ {tunnel.get('code')}"
+                if tunnel["ok"]:
+                    down = _curl(port, CHECK_DOWNLOAD_URL, CHECK_DOWNLOAD_TIMEOUT)
+                    enough = down.get("bytes", 0) >= CHECK_DOWNLOAD_BYTES * 0.9
+                    result["download"] = {
+                        "ok": bool(down["ok"] and enough), "ms": down.get("ms"),
+                        "bytes": down.get("bytes", 0), "error": down.get("error", ""),
+                    }
+                    if not result["download"]["ok"] and not result["download"]["error"]:
+                        result["download"]["error"] = (
+                            f"получено {down.get('bytes', 0)} из {CHECK_DOWNLOAD_BYTES} байт"
+                        )
+            finally:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+    return result
+
+
+def check_target(target: Dict[str, Any]) -> Dict[str, Any]:
+    result: Dict[str, Any] = {"key": target.get("key")}
+    host, port, sni = target.get("host"), target.get("port"), target.get("sni") or ""
+    if host and port:
+        result["tls"] = check_tls(str(host), int(port), str(sni))
+    result.update(check_tunnel(target["outbound"]))
+    return result
+
+
+@app.post("/check", dependencies=[Depends(require_token)])
+def check(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Проверить серверы через присланные исходящие Xray — параллельно."""
+    targets = []
+    for item in (payload.get("targets") or [])[:CHECK_LIMIT]:
+        if not isinstance(item, dict) or not isinstance(item.get("outbound"), dict):
+            raise HTTPException(400, "каждая цель — объект с полем outbound")
+        if not str(item.get("key") or ""):
+            raise HTTPException(400, "у каждой цели должен быть key")
+        targets.append(item)
+    if not Path(XRAY_BIN).exists():
+        raise HTTPException(500, f"нет ядра {XRAY_BIN}: переустановите агента")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, CHECK_WORKERS)) as pool:
+        results = list(pool.map(check_target, targets))
+    return {"results": results, "agent_version": AGENT_VERSION}
 
 
 def main() -> None:

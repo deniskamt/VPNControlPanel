@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     NODE_POLL_INTERVAL: int = 30
     # Как часто проверять истёкшие подписки и превышение лимита, секунды.
     ENFORCE_INTERVAL: int = 60
+    # Как часто зонд (сервер в стране пользователей) проверяет серверы, секунды.
+    PROBE_INTERVAL: int = 900
     # Таймаут запроса к агенту ноды, секунды.
     NODE_TIMEOUT: int = 10
 

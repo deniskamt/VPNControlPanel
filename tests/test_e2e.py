@@ -1490,3 +1490,32 @@ def test_server_access_mode_all_or_selected(client, auth, inbound):
 
     bad = client.post("/nodes/1/access-mode", data={"mode": "nobody"}, follow_redirects=False)
     assert bad.status_code == 422
+
+
+def test_probe_panel_and_key_on_servers(client, inbound):
+    """Зонд: окно на странице серверов, ключ попадает в конфиг серверов."""
+    page = client.get("/nodes").text
+    assert 'id="probe"' in page and "Добавить зонд" in page
+    # Пока зонда нет, служебного ключа в конфиге сервера нет.
+    assert "__probe__" not in client.get("/nodes/1/config").text
+
+    created = client.post(
+        "/probes/create",
+        data={"name": "Россия", "address": "https://ru.example.com/", "agent_port": 8443},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303, created.text
+
+    page = client.get("/nodes").text
+    assert "ru.example.com:8443" in page
+    assert "install_agent.sh" in page and "Проверить сейчас" in page
+    assert "__probe__" in client.get("/nodes/1/config").text
+
+    # Выключенный зонд — ключ с серверов уходит.
+    assert client.post("/probes/1/toggle", follow_redirects=False).status_code == 303
+    assert "__probe__" not in client.get("/nodes/1/config").text
+    assert client.post("/probes/1/toggle", follow_redirects=False).status_code == 303
+
+    assert client.post("/probes/1/delete", follow_redirects=False).status_code == 303
+    assert "ru.example.com" not in client.get("/nodes").text
+    assert "probe.create" in client.get("/logs").text

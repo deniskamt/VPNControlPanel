@@ -672,3 +672,16 @@ input, select, textarea {
   color: var(--text);
   white-space: nowrap;
 }
+
+/* ---------- Зонд: проверка из России ---------- */
+.probe-head { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; }
+.probe-head > div:first-child { flex: 1 1 260px; }
+.probe-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.row-detail-block { border-top: 1px solid var(--border); }
+.probe-table td { vertical-align: top; }
+.probe-table tr.probe-fail td:first-child { box-shadow: inset 3px 0 0 var(--err, #e5484d); }
+.probe-table tr.probe-slow td:first-child { box-shadow: inset 3px 0 0 var(--warn, #f5a524); }
+.probe-reason { margin-top: 4px; font-size: 12px; color: var(--err, #e5484d); max-width: 340px; }
+.probe-table tr.probe-slow .probe-reason { color: var(--warn, #f5a524); }
+.probe-error { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.probe-note { font-size: 13px; }

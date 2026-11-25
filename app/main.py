@@ -22,7 +22,7 @@ from app.models.admin import Admin
 from app.models.base import Base
 from app.services import users as user_service
 from app.services.worker import start_workers, stop_workers
-from app.web import auth, dashboard, inbounds, logs, masking, nodes, subscription, users
+from app.web import auth, dashboard, inbounds, logs, masking, nodes, probes, subscription, users
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -168,6 +168,7 @@ if settings.SUBSCRIPTION_PATH != "sub":
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(nodes.router)
+app.include_router(probes.router)
 app.include_router(users.router)
 app.include_router(inbounds.router)
 app.include_router(masking.router)

@@ -112,10 +112,27 @@ async def _enforce_loop() -> None:
         await asyncio.sleep(settings.ENFORCE_INTERVAL)
 
 
+async def _probe_loop() -> None:
+    """Зонд в стране пользователей проверяет серверы раз в PROBE_INTERVAL."""
+    from app.services import probe
+
+    await asyncio.sleep(60)  # дать нодам подняться после старта панели
+    while True:
+        try:
+            async with session_scope() as session:
+                await probe.run_all(session)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - воркер не должен умирать
+            logger.exception(f"Ошибка в цикле зонда: {exc}")
+        await asyncio.sleep(settings.PROBE_INTERVAL)
+
+
 def start_workers() -> List[asyncio.Task]:
     return [
         asyncio.create_task(_poll_loop(), name="node-poll"),
         asyncio.create_task(_enforce_loop(), name="enforce-limits"),
+        asyncio.create_task(_probe_loop(), name="probe"),
     ]
 
 

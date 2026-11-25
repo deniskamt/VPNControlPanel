@@ -162,6 +162,20 @@ class NodeClient:
             ),
         )
 
+    async def check(self, targets: list) -> Dict[str, Any]:
+        """Зонд: подключиться через каждый сервер как пользователь."""
+        return await self._request(
+            "POST",
+            "/check",
+            json={"targets": targets},
+            # Каждая цель — до полуминуты, параллельно по четыре.
+            timeout=max(self.timeout, 60 + 15 * len(targets)),
+            missing_hint=(
+                "агент на зонде старее версии 8 и не умеет проверять серверы. "
+                "Обновите его командой установки или кнопкой «Обновить агента»"
+            ),
+        )
+
     async def update_xray(self, version: str) -> Dict[str, Any]:
         """Поставить на ноду другую версию ядра Xray — с проверкой и откатом."""
         return await self._request(

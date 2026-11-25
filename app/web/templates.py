@@ -120,6 +120,28 @@ def human_bytes(value: Optional[int]) -> str:
     return f"{size:.1f} PB"
 
 
+def human_ago(value) -> str:
+    """«3 мин назад» — для событий (в отличие от last_seen, без «в сети»).
+    Принимает datetime или ISO-строку из JSON."""
+    if not value:
+        return "никогда"
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+    minutes = int((datetime.utcnow() - value).total_seconds() // 60)
+    if minutes < 1:
+        return "только что"
+    if minutes < 60:
+        return f"{minutes} мин назад"
+    if minutes < 24 * 60:
+        return f"{minutes // 60} ч назад"
+    if minutes < 30 * 24 * 60:
+        return f"{minutes // (24 * 60)} дн назад"
+    return value.strftime("%d.%m.%Y")
+
+
 def human_datetime(value: Optional[datetime]) -> str:
     return value.strftime("%d.%m.%Y %H:%M") if value else "—"
 
@@ -170,4 +192,5 @@ templates.env.globals["is_online"] = presence.is_online
 templates.env.globals["status_title"] = status_title
 templates.env.globals["status_badge"] = status_badge
 templates.env.filters["last_seen"] = presence.last_seen
+templates.env.filters["ago"] = human_ago
 templates.env.globals["now"] = datetime.utcnow

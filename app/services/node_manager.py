@@ -22,7 +22,7 @@ from app.models.enums import DataLimitResetStrategy, NodeStatus, ProxyType, User
 from app.models.node import Node
 from app.models.usage import NodeUsage, NodeUserInboundUsage, NodeUserUsage, SystemUsage
 from app.models.user import User
-from app.services import hysteria, notifier, stats_email
+from app.services import hysteria, notifier, probe_identity, stats_email
 from app.services.audit import log_action
 from app.services.node_client import NodeClient, NodeError
 from app.services.xray_config import (
@@ -96,7 +96,7 @@ async def sync_node(
     if users is None:
         users = await load_users(session)
 
-    config = build_node_config(node, users)
+    config = build_node_config(node, users, await probe_identity.for_servers(session))
     # Hysteria2 живёт отдельным процессом, поэтому уезжает своим полем. В
     # отпечаток берём оба конфига: иначе правка одного только hysteria не
     # доехала бы до ноды — отпечаток Xray-части не изменился бы.

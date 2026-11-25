@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+from datetime import datetime
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -27,7 +28,7 @@ from app.services.keys import generate_agent_token
 from app.services.node_client import NodeClient, NodeError
 from app.services.node_manager import load_users, poll_node, sync_node
 from app.services.xray_config import build_node_config, config_hash
-from app.services import node_stats, ports, presence, xray_version
+from app.services import node_stats, ports, presence, probe_identity, xray_version
 from app.services.worker import trigger_sync
 from app.web.templates import templates
 
@@ -81,6 +82,7 @@ async def list_nodes(
     node_users = await presence.users_by_node(session)
     day = await node_stats.day_stats(session)
     granted = await _granted_users(session)
+    probes = await _probe_panels(session, nodes)
     return templates.TemplateResponse(
         request,
         "nodes.html",
@@ -109,6 +111,8 @@ async def list_nodes(
                 for node_id, rows in node_users.items()
             },
             "granted": granted,
+            "probes": probes,
+            "probe_interval": settings.PROBE_INTERVAL,
             # После сохранения доступа возвращаемся с раскрытой панелью
             # этого сервера и списком логинов, которых не нашли.
             "open_row": request.query_params.get("open", ""),
@@ -118,6 +122,40 @@ async def list_nodes(
             "NodeAccessMode": NodeAccessMode,
         },
     )
+
+
+def _parse_time(value: Optional[str]) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(value) if value else None
+    except ValueError:
+        return None
+
+
+async def _probe_panels(session: AsyncSession, nodes: List[Node]) -> List[Dict]:
+    """Зонды и их последние результаты — для панели «Проверка из России»."""
+    from app.models.probe import Probe
+    from app.services import probe as probe_service
+
+    order = {node.id: index for index, node in enumerate(nodes)}
+    panels = []
+    for probe in (await session.execute(select(Probe).order_by(Probe.id))).scalars().all():
+        rows = []
+        for key, entry in (probe.results or {}).items():
+            row = dict(entry, key=key)
+            row["checked"] = _parse_time(entry.get("checked_at"))
+            row["last_ok"] = _parse_time(entry.get("last_ok_at"))
+            row["domain"] = (probe.domains or {}).get(entry.get("sni") or "")
+            rows.append(row)
+        rows.sort(key=lambda row: (order.get(row.get("node_id"), 10**6), row["key"]))
+        panels.append({
+            "probe": probe,
+            "rows": rows,
+            "summary": probe_service.summary(probe),
+            "running": probe.id in probe_service.running,
+            "outdated": bool(probe.last_seen_at)
+            and (probe.agent_version or 0) < probe_service.PROBE_AGENT_VERSION,
+        })
+    return panels
 
 
 async def _granted_users(session: AsyncSession) -> Dict[int, List[User]]:
@@ -650,7 +688,7 @@ async def node_config(
     """
     node = await _get_node(session, node_id)
     users = await load_users(session)
-    config = build_node_config(node, users)
+    config = build_node_config(node, users, await probe_identity.for_servers(session))
 
     return templates.TemplateResponse(
         request,

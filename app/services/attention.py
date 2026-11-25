@@ -109,6 +109,29 @@ async def collect(session: AsyncSession) -> List[Issue]:
             "/subscription#node-protocols", "Протоколы на серверах",
         ))
 
+    # --- Проверка из страны пользователей ----------------------------------
+    from app.models.probe import Probe
+
+    for probe in (await session.execute(select(Probe).where(Probe.is_enabled.is_(True)))).scalars():
+        if probe.status == "error":
+            issues.append(Issue(
+                "warn", f"Зонд «{probe.name}» не отвечает",
+                (probe.message or "")[:200] + " Пока он молчит, блокировки никто не заметит.",
+                "/nodes#probe", "К зонду",
+            ))
+            continue
+        broken = [e for e in (probe.results or {}).values()
+                  if e.get("state") != "ok" and int(e.get("fail_streak") or 0) >= 2]
+        if broken:
+            first = broken[0]
+            issues.append(Issue(
+                "err",
+                f"Из «{probe.name}» не работает: {len(broken)} подключ.",
+                f"{first.get('node')} · {first.get('inbound')}: {first.get('reason') or ''}"[:220]
+                + " Обычно помогает смена маскировочного домена этого сервера.",
+                "/nodes#probe", "Результаты проверки",
+            ))
+
     # --- Подключения ---------------------------------------------------------
     orphan = [i for i in inbounds if i.is_enabled and not any(n.is_enabled for n in i.nodes)]
     for inbound in orphan:

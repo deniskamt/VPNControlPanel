@@ -90,6 +90,194 @@
   </div>
 </div>
 
+{# ===== Зонд: проверка серверов из страны пользователей ===== #}
+{% macro check_cell(item, kind) %}
+  {% if not item %}
+    <span class="muted">—</span>
+  {% elif item.ok %}
+    <span class="badge ok">{% if kind == 'download' %}{{ item.bytes | bytes }}{% else %}работает{% endif %}</span>
+    {% if item.ms is not none %}<div class="muted sub-line">{{ item.ms }} мс</div>{% endif %}
+  {% else %}
+    <span class="badge {{ 'warn' if kind == 'download' else 'err' }}" title="{{ item.error or '' }}">{{ 'обрывается' if kind == 'download' else 'нет' }}</span>
+    <div class="muted sub-line probe-error">{{ (item.error or '')[:60] }}</div>
+  {% endif %}
+{% endmacro %}
+
+<div class="panel" id="probe">
+  <header>
+    Проверка из России
+    <span class="muted" style="font-weight:400">— работает ли VPN там, где пользователи</span>
+  </header>
+
+  {% if not probes %}
+  <div class="body">
+    <div class="hint-box" style="margin-bottom:14px">
+      Сервер в Германии не знает, доходит ли до него соединение из России:
+      блокирует не он, а оборудование провайдеров (ТСПУ) по дороге. Поэтому
+      проверять нужно из России. Добавьте российский сервер как <b>зонд</b>:
+      на него ставится тот же агент, но пользователей он не обслуживает и в
+      подписку не попадает. Раз в {{ (probe_interval // 60) }} мин он подключается через каждый
+      ваш сервер так же, как приложение пользователя, и сообщает в Telegram,
+      если что-то перестало работать.
+    </div>
+    <form method="post" action="/probes/create">
+      <div class="form-grid">
+        <div>
+          <label>Название</label>
+          <input type="text" name="name" value="Россия" required>
+        </div>
+        <div>
+          <label>Адрес российского сервера (IP или домен)</label>
+          <input type="text" name="address" placeholder="185.12.34.56" required>
+        </div>
+        <div>
+          <label>Порт агента</label>
+          <input type="number" name="agent_port" value="8443" required>
+        </div>
+      </div>
+      <button type="submit" class="primary" style="margin-top:12px">Добавить зонд</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {% for panel in probes %}
+  {% set probe = panel.probe %}
+  <div class="body probe-head">
+    <div>
+      <div class="who">{{ flag('RU') }} {{ probe.name }}
+        {% if not probe.is_enabled %}<span class="badge mute">выключен</span>
+        {% elif panel.running %}<span class="badge warn">идёт проверка…</span>
+        {% elif probe.status == 'connected' %}<span class="badge ok">на связи</span>
+        {% elif probe.status == 'error' %}<span class="badge err">ошибка</span>
+        {% else %}<span class="badge warn">ещё не проверял</span>{% endif %}
+        {% if panel.outdated %}<span class="badge warn">агент устарел</span>{% endif %}
+      </div>
+      <div class="mono muted">{{ probe.address }}:{{ probe.agent_port }}
+        {% if probe.last_run_at %} · проверка {{ probe.last_run_at | ago }}{% endif %}
+      </div>
+    </div>
+    {% if panel.summary.total %}
+    <div class="probe-summary">
+      <b>{{ panel.summary.ok }}</b> из {{ panel.summary.total }} работают
+      {% if panel.summary.slow %}<span class="badge warn">{{ panel.summary.slow }} медленно</span>{% endif %}
+      {% if panel.summary.fail %}<span class="badge err">{{ panel.summary.fail }} не работает</span>{% endif %}
+    </div>
+    {% endif %}
+    <div class="actions">
+      <form class="inline" method="post" action="/probes/{{ probe.id }}/run">
+        <button class="small primary" type="submit" {% if panel.running or not probe.is_enabled %}disabled{% endif %}>Проверить сейчас</button>
+      </form>
+      <button class="small" data-toggle="#probe-install-{{ probe.id }}">Установка</button>
+      <button class="small" data-toggle="#probe-edit-{{ probe.id }}">Изменить</button>
+      <button class="small" data-toggle="#probe-more-{{ probe.id }}">Ещё</button>
+    </div>
+  </div>
+
+  {% if probe.message and (probe.status == 'error' or panel.outdated) %}
+  <div class="node-error" style="margin:0 18px 12px">{{ probe.message }}</div>
+  {% elif probe.message %}
+  <div class="muted" style="margin:0 18px 12px">{{ probe.message }}</div>
+  {% endif %}
+
+  <div class="body row-detail-block" id="probe-more-{{ probe.id }}" hidden>
+    <div class="row-actions">
+      <form class="inline" method="post" action="/probes/{{ probe.id }}/update-agent">
+        <button class="small" type="submit">Обновить агента</button>
+      </form>
+      <form class="inline" method="post" action="/probes/{{ probe.id }}/toggle">
+        <button class="small" type="submit">{{ 'Выключить' if probe.is_enabled else 'Включить' }}</button>
+      </form>
+      <form class="inline" method="post" action="/probes/{{ probe.id }}/delete"
+            data-confirm="Удалить зонд {{ probe.name }}? Его ключ уйдёт с серверов.">
+        <button class="small danger" type="submit">Удалить</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="body row-detail-block" id="probe-install-{{ probe.id }}" {% if probe.last_seen_at %}hidden{% endif %}>
+    <p class="muted" style="margin-top:0">
+      Выполните на российском сервере <b>{{ probe.address }}</b> под root — токен уже подставлен.
+      Это тот же агент, что на серверах; пользователей он обслуживать не будет.
+    </p>
+    <div class="code-block">
+      <div class="code" id="probe-cmd-{{ probe.id }}">curl -fsSL {{ panel_url }}/install/install_agent.sh -o install_agent.sh
+AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent.sh</div>
+      <button class="small" data-copy="#probe-cmd-{{ probe.id }}">Копировать</button>
+    </div>
+    <p class="muted" style="margin-bottom:0">
+      Потом закройте порт {{ probe.agent_port }} для всех, кроме панели:
+      <span class="mono">ufw allow from &lt;IP панели&gt; to any port {{ probe.agent_port }} proto tcp</span>
+      — и нажмите «Проверить сейчас».
+    </p>
+  </div>
+
+  <div class="body row-detail-block" id="probe-edit-{{ probe.id }}" hidden>
+    <form method="post" action="/probes/{{ probe.id }}/update">
+      <div class="form-grid">
+        <div><label>Название</label><input type="text" name="name" value="{{ probe.name }}" required></div>
+        <div><label>Адрес</label><input type="text" name="address" value="{{ probe.address }}" required></div>
+        <div><label>Порт агента</label><input type="number" name="agent_port" value="{{ probe.agent_port }}" required></div>
+      </div>
+      <div class="checks" style="margin-top:10px">
+        <label><input type="checkbox" name="agent_tls" {% if probe.agent_tls %}checked{% endif %}> агент по HTTPS</label>
+        <label><input type="checkbox" name="agent_insecure" {% if probe.agent_insecure %}checked{% endif %}> не проверять сертификат</label>
+      </div>
+      <button type="submit" class="primary" style="margin-top:10px">Сохранить</button>
+    </form>
+  </div>
+
+  {% if panel.rows %}
+  <div class="table-wrap">
+    <table class="probe-table">
+      <thead>
+        <tr>
+          <th>Сервер и подключение</th>
+          <th>Маскировочный домен</th>
+          <th title="Доходит ли TLS-рукопожатие до сервера под этим доменом">TLS до сервера</th>
+          <th title="Поднимается ли подключение и открывается ли страница через него">Туннель</th>
+          <th title="Скачивается ли ~1 МБ: так видно соединения, которые «замерзают» после первых килобайт">Загрузка</th>
+          <th title="Открывается ли сам маскировочный сайт из России напрямую">Домен из России</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in panel.rows %}
+        <tr class="probe-{{ row.state }}">
+          <td>
+            <div class="who">{{ flag(row.country) }} {{ row.node }}</div>
+            <div class="muted sub-line">{{ row.inbound }} · {{ row.transport }}</div>
+            {% if row.state != 'ok' %}
+            <div class="probe-reason">{{ row.reason }}</div>
+            <div class="muted sub-line">{% if row.last_ok %}работало {{ row.last_ok | ago }}{% else %}ни разу не работало{% endif %}</div>
+            {% endif %}
+          </td>
+          <td class="mono">{{ row.sni or '—' }}</td>
+          <td>{{ check_cell(row.tls, 'tls') }}</td>
+          <td>{{ check_cell(row.tunnel, 'tunnel') }}</td>
+          <td>{% if row.tunnel and row.tunnel.ok %}{{ check_cell(row.download, 'download') }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>
+            {% if row.domain %}
+              {% if row.domain.ok %}<span class="badge ok">открывается</span>
+              {% else %}<span class="badge warn" title="{{ row.domain.note or '' }}">{{ row.domain.note or 'нет' }}</span>{% endif %}
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="body muted probe-note">
+    Проверка идёт из сети дата-центра. Мобильные операторы фильтруют жёстче,
+    поэтому «работает» здесь ещё не гарантия, что работает в мобильном интернете,
+    а «не работает» почти наверняка значит, что не работает и у людей.
+    Hysteria2 зонд пока не проверяет. Если сервер не работает, а сам домен из России
+    открывается — обычно помогает сменить маскировочный домен этого сервера.
+  </div>
+  {% elif probe.last_run_at %}
+  <div class="empty">Проверять нечего: нет включённых подключений на серверах</div>
+  {% endif %}
+  {% endfor %}
+</div>
+
 <div class="panel" id="add-node" hidden>
   <header>Новый сервер</header>
   <div class="body">
