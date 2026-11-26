@@ -30,7 +30,7 @@ def node(node_id, hidden=False, status=NodeStatus.connected):
 
 
 def ok(sni="d.example"):
-    return {"state": "ok", "fail_streak": 0, "security": "reality", "sni": sni,
+    return {"state": "ok", "fail_streak": 0, "ok_streak": 5, "security": "reality", "sni": sni,
             "tls": {"ok": True}, "tunnel": {"ok": True}, "download": {"ok": True}}
 
 
@@ -311,3 +311,53 @@ def test_blocked_server_firewall_does_not_veto_new_port(monkeypatch):
     todo = probe_fix.Plan(move_ports=[(2, [1, 2])])
     asyncio.run(probe_fix.apply(Agent(), probe, nodes, todo, now=NOW))
     assert xhttp.port == 443 and "port-none:2" in todo.notes
+
+
+
+def test_blinking_server_is_not_returned_on_first_success():
+    """Живой случай: Berlin #2 то доступен, то нет — убирали и возвращали
+    каждый час. Возвращаем только после нескольких удачных проверок подряд."""
+    nodes = [node(1, hidden=True), node(2)]
+    one_ok = dict(ok(), ok_streak=1)
+    merged = results({1: (one_ok, port_cut()), 2: (ok(), ok())})
+    assert probe_fix.plan(nodes, merged, {}, now=NOW).unhide == []
+
+    three = dict(ok(), ok_streak=3)
+    merged = results({1: (three, port_cut()), 2: (ok(), ok())})
+    assert probe_fix.plan(nodes, merged, {}, now=NOW).unhide == [1]
+
+    # Уже дважды убирали за сутки — нужно два часа стабильной работы.
+    flapping = {"nodes": {"1": {"hidden_at": [
+        (NOW - timedelta(hours=h)).isoformat() for h in (2, 6)]}}}
+    todo = probe_fix.plan(nodes, merged, flapping, now=NOW)
+    assert todo.unhide == [] and "flap:1" in todo.notes
+    long_ok = dict(ok(), ok_streak=8)
+    merged = results({1: (long_ok, port_cut()), 2: (ok(), ok())})
+    assert probe_fix.plan(nodes, merged, flapping, now=NOW).unhide == [1]
+    # Старые скрытия (больше суток назад) не считаются.
+    old = {"nodes": {"1": {"hidden_at": [(NOW - timedelta(days=2)).isoformat()] * 3}}}
+    merged = results({1: (three, port_cut()), 2: (ok(), ok())})
+    assert probe_fix.plan(nodes, merged, old, now=NOW).unhide == [1]
+
+
+def test_hide_is_remembered_for_flap_detection():
+    import asyncio
+
+    nodes = [node(1), node(2)]
+    probe = SimpleNamespace(fixes={}, auto_hide=True)
+    asyncio.run(probe_fix.apply(object(), probe, nodes, probe_fix.Plan(hide=[1]), now=NOW))
+    assert probe.fixes["nodes"]["1"]["hidden_at"] == [NOW.isoformat()]
+    assert probe_fix.recent_hides(probe.fixes, 1, NOW) == 1
+
+
+def test_ok_streak_counts_consecutive_successes():
+    from app.services import probe as probe_service
+
+    target = {"key": "1:1:0", "label": {"node": "N1"}}
+    good = {"key": "1:1:0", "tunnel": {"ok": True}, "download": {"ok": True}}
+    bad = {"key": "1:1:0", "tunnel": {"ok": False}}
+    state, _ = probe_service.merge({}, [target], [good], "t1")
+    state, _ = probe_service.merge(state, [target], [good], "t2")
+    assert state["1:1:0"]["ok_streak"] == 2
+    state, _ = probe_service.merge(state, [target], [bad], "t3")
+    assert state["1:1:0"]["ok_streak"] == 0

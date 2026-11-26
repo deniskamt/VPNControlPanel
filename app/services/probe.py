@@ -185,6 +185,9 @@ def merge(
             "checked_at": now,
             "last_ok_at": now if state == "ok" else before.get("last_ok_at"),
             "fail_streak": 0 if state == "ok" else int(before.get("fail_streak") or 0) + 1,
+            # Сколько проверок подряд работает: по нему скрытый сервер
+            # возвращается в подписку не с первой удачи (probe_fix).
+            "ok_streak": int(before.get("ok_streak") or 0) + 1 if state == "ok" else 0,
             "alerted": bool(before.get("alerted")),
         })
         entry["reason"] = "" if state == "ok" else reason(entry)

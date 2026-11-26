@@ -42,6 +42,13 @@ DOMAIN_DAILY_LIMIT = 3
 DOMAIN_CANDIDATES = 10
 # Сколько записей «что сделал зонд» хранить.
 LOG_SIZE = 30
+# Возврат скрытого сервера: столько удачных проверок подряд (15 мин каждая).
+UNHIDE_AFTER = 3
+# Сервер, который за сутки скрывали уже столько раз, «мигает»: блокировку
+# то включают, то снимают. Ему — два часа стабильной работы.
+FLAP_HIDES = 2
+UNHIDE_AFTER_FLAPPING = 8
+FLAP_WINDOW = timedelta(days=1)
 # Перепроверка после исправления: дать серверам время принять конфиг.
 RECHECK_DELAY = 180
 
@@ -115,6 +122,11 @@ def node_views(merged: Dict[str, Any]) -> Dict[int, NodeView]:
     return views
 
 
+def recent_hides(history: Dict[str, Any], node_id: int, now: datetime) -> int:
+    hidden = ((history.get("nodes") or {}).get(str(node_id)) or {}).get("hidden_at") or []
+    return sum(1 for at in hidden if now - datetime.fromisoformat(at) < FLAP_WINDOW)
+
+
 def plan(
     nodes: Sequence[Any],
     merged: Dict[str, Any],
@@ -153,8 +165,22 @@ def plan(
                 f"{node.name}: недоступен ни из России, ни из Европы — сервер лежит "
                 "или закрыт файрволом"
             )
-        if getattr(node, "probe_hidden", False) and (view.any_ok or not auto_hide):
-            result.unhide.append(node.id)
+        if getattr(node, "probe_hidden", False):
+            if not auto_hide:
+                result.unhide.append(node.id)
+                continue
+            hides = recent_hides(history, node.id, now)
+            need = UNHIDE_AFTER_FLAPPING if hides >= FLAP_HIDES else UNHIDE_AFTER
+            streak = max((int(e.get("ok_streak") or 0) for e in view.entries
+                          if e.get("state") == "ok"), default=0)
+            if streak >= need:
+                result.unhide.append(node.id)
+            elif hides >= FLAP_HIDES and view.any_ok:
+                result.notes[f"flap:{node.id}"] = (
+                    f"{node.name}: из России то доступен, то нет — за сутки убирал из подписок "
+                    f"{hides} раза. Верну, когда проработает стабильно "
+                    f"{UNHIDE_AFTER_FLAPPING * 15 // 60} ч. Такому IP лучше замена"
+                )
     # Сервер выключили руками или зонд выключили — скрытие снимаем.
     for node in nodes:
         if getattr(node, "probe_hidden", False) and node.id not in views and node.id not in result.unhide:
@@ -419,6 +445,12 @@ async def apply(client, probe, nodes: Sequence[Any], todo: Plan, now: Optional[d
     for node_id in todo.hide:
         node = by_id[node_id]
         node.probe_hidden = True
+        state = dict(history["nodes"].get(str(node_id)) or {})
+        state["hidden_at"] = [
+            at for at in state.get("hidden_at", [])
+            if now - datetime.fromisoformat(at) < FLAP_WINDOW
+        ] + [now.isoformat()]
+        history["nodes"][str(node_id)] = state
         done.append(f"{node.name}: убран из подписок, пока IP заблокирован в России — "
                     "вернётся сам, когда заработает")
 
