@@ -60,6 +60,9 @@ class NodeView:
     entries: List[Dict[str, Any]]
     any_ok: bool = False          # хоть что-то на сервере доходит из России
     ip_blocked: bool = False      # из России не доходит ничего, из Европы жив
+    # Ни одно подключение не работает, хотя сервер жив (рукопожатие проходит
+    # или из Европы доступен): данные режут. Людям он бесполезен.
+    unusable: bool = False
     dead: bool = False            # не доходит ни оттуда, ни отсюда
 
 
@@ -112,7 +115,10 @@ def node_views(merged: Dict[str, Any]) -> Dict[int, NodeView]:
         view.entries.append(item)
     for view in views.values():
         view.any_ok = any(_reaches(entry) for entry in view.entries)
-        if view.any_ok or not all(_confirmed(entry) for entry in view.entries):
+        confirmed = all(_confirmed(entry) for entry in view.entries)
+        if view.any_ok and confirmed and not any(e.get("state") == "ok" for e in view.entries):
+            view.unusable = True
+        if view.any_ok or not confirmed:
             continue
         with_control = [entry for entry in view.entries if entry.get("control")]
         if any(_control_ok(entry) for entry in with_control):
@@ -150,7 +156,15 @@ def plan(
     enabled = [node for node in nodes if node.is_enabled]
 
     # --- IP заблокирован: убрать из подписок, вернуть, когда оживёт ----------
-    blocked = [view for view in views.values() if view.ip_blocked and view.node_id in by_id]
+    blocked = [
+        view for view in views.values()
+        if view.node_id in by_id and (
+            view.ip_blocked
+            # «Режут данные» — только у сервера, который принял конфиг: иначе
+            # провал может значить, что на нём просто нет ключа проверки.
+            or (view.unusable and by_id[view.node_id].status == NodeStatus.connected)
+        )
+    ]
     for view in views.values():
         node = by_id.get(view.node_id)
         if node is None:
@@ -159,6 +173,11 @@ def plan(
             result.notes[f"ip:{node.id}"] = (
                 f"{node.name}: IP заблокирован в России (из Европы сервер работает) — "
                 "нужен новый IP у хостинга"
+            )
+        elif view.unusable:
+            result.notes[f"cut:{node.id}"] = (
+                f"{node.name}: из России не работает ни одно подключение — рукопожатие "
+                "проходит, а данные режут. Убран из подписок; поможет новый IP"
             )
         elif view.dead:
             result.notes[f"dead:{node.id}"] = (
@@ -286,6 +305,15 @@ def plan(
                     )
                     continue
                 result.rotate_domains.append((node.id, sni))
+
+    # Сначала пробуем сменить домен — убирать из подписок рано: скрываем
+    # «режут данные», только когда менять домен уже нечего или нельзя.
+    rotating = {node_id for node_id, _ in result.rotate_domains}
+    for node_id in rotating:
+        view = views.get(node_id)
+        if view is not None and view.unusable and not view.ip_blocked and node_id in result.hide:
+            result.hide.remove(node_id)
+            result.notes.pop(f"cut:{node_id}", None)
     return result
 
 

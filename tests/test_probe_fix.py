@@ -361,3 +361,30 @@ def test_ok_streak_counts_consecutive_successes():
     assert state["1:1:0"]["ok_streak"] == 2
     state, _ = probe_service.merge(state, [target], [bad], "t3")
     assert state["1:1:0"]["ok_streak"] == 0
+
+
+
+def test_server_where_nothing_works_is_hidden_even_if_handshake_passes():
+    """Живой случай: Berlin #2 — на XHTTP рукопожатие есть, данные режут, на
+    VISION не доходит вовсе. Людям сервер бесполезен — убираем."""
+    nodes = [node(i) for i in range(1, 5)]
+    merged = results({1: (port_cut(), sni_cut()), 2: (ok(), ok()), 3: (ok(), ok()),
+                      4: (ok(), ok())})
+    # Сначала — смена домена, из подписок пока не убираем.
+    todo = probe_fix.plan(nodes, merged, {}, now=NOW)
+    assert todo.rotate_domains == [(1, "d.example")] and todo.hide == []
+    # Домен уже меняли трижды за сутки (как у Berlin #2) — убираем.
+    tried = {"nodes": {"1": {"domain_changes": [
+        (NOW - timedelta(hours=h)).isoformat() for h in (1, 2, 3)]}}}
+    todo = probe_fix.plan(nodes, merged, tried, now=NOW)
+    assert todo.hide == [1] and "cut:1" in todo.notes
+
+    # Хоть одно подключение работает — сервер остаётся.
+    merged = results({1: (ok(), sni_cut()), 2: (ok(), ok()), 3: (ok(), ok()), 4: (ok(), ok())})
+    assert probe_fix.plan(nodes, merged, tried, now=NOW).hide == []
+
+    # Сервер не принял конфиг — провал может быть из-за ключа, не прячем.
+    nodes[0].status = NodeStatus.error
+    merged = results({1: (port_cut(), sni_cut()), 2: (ok(), ok()), 3: (ok(), ok()),
+                      4: (ok(), ok())})
+    assert probe_fix.plan(nodes, merged, tried, now=NOW).hide == []
