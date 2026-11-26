@@ -193,3 +193,19 @@ def test_shadowsocks_target_builds():
     own = shadowsocks.client_password("probe-ss", "2022-blake3-aes-128-gcm")
     assert by_tag["SS"]["password"] == f"U0VSVkVSS0VZMTIzNDU2Nw==:{own}"
     assert by_tag["SS-OLD"]["password"] == "probe-ss"
+
+
+def test_one_missed_run_is_not_an_error():
+    import asyncio
+
+    class Session:
+        async def commit(self):
+            pass
+
+    p = SimpleNamespace(fixes={}, status="connected", message=None)
+    asyncio.run(probe._unreachable(Session(), p, "таймаут"))
+    assert p.status == "connected" and "повторю" in p.message
+    asyncio.run(probe._unreachable(Session(), p, "таймаут"))
+    assert p.status == "error" and "2 проверки подряд" in p.message
+    probe._reachable(p)
+    assert p.fixes["misses"] == 0

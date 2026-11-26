@@ -235,7 +235,9 @@ async def run(session: AsyncSession, probe: Probe) -> None:
 
 
 async def _run(session: AsyncSession, probe: Probe, load_nodes) -> None:
-    client = NodeClient(probe)
+    # Связь «Европа — Россия» бывает рваной: таймаут побольше, а ошибкой
+    # считаем только два прогона подряд без ответа (см. _unreachable).
+    client = NodeClient(probe, timeout=PROBE_TIMEOUT)
     try:
         health = await client.health()
     except NodeError:
@@ -244,9 +246,9 @@ async def _run(session: AsyncSession, probe: Probe, load_nodes) -> None:
         try:
             health = await client.health()
         except NodeError as exc:
-            probe.status, probe.message = "error", str(exc)
-            await session.commit()
+            await _unreachable(session, probe, str(exc))
             return
+    _reachable(probe)
 
     probe.agent_version = health.get("agent_version")
     probe.xray_version = health.get("xray_version") or probe.xray_version
@@ -271,8 +273,7 @@ async def _run(session: AsyncSession, probe: Probe, load_nodes) -> None:
             for target in targets
         ]) if targets else {"results": []}
     except NodeError as exc:
-        probe.status, probe.message = "error", str(exc)
-        await session.commit()
+        await _unreachable(session, probe, str(exc))
         return
 
     # Сам маскировочный домен из этой страны: заблокированный сайт под SNI —
@@ -388,6 +389,32 @@ async def _add_control(targets: Sequence[Dict[str, Any]], results: List[Dict[str
     for (place, items), answer in zip(wanted.items(), answers):
         for item in items:
             item["control"] = answer
+
+
+PROBE_TIMEOUT = 25
+# Столько прогонов подряд без ответа — и зонд помечается ошибкой.
+UNREACHABLE_AFTER = 2
+
+
+async def _unreachable(session: AsyncSession, probe: Probe, error: str) -> None:
+    """Зонд не ответил. Один раз — бывает (рваная связь с Россией): прошлые
+    результаты остаются, статус не меняется. Два раза подряд — ошибка."""
+    fixes = dict(probe.fixes or {})
+    misses = int(fixes.get("misses") or 0) + 1
+    fixes["misses"] = misses
+    probe.fixes = fixes
+    if misses >= UNREACHABLE_AFTER:
+        probe.status, probe.message = "error", f"не отвечает {misses} проверки подряд: {error}"
+    else:
+        probe.message = "прошлая проверка не дозвонилась до зонда — повторю в следующий раз"
+    await session.commit()
+
+
+def _reachable(probe: Probe) -> None:
+    if (probe.fixes or {}).get("misses"):
+        fixes = dict(probe.fixes)
+        fixes["misses"] = 0
+        probe.fixes = fixes
 
 
 async def run_all(session: AsyncSession) -> None:
