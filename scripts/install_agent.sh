@@ -63,8 +63,23 @@ fi
 echo "==> Ставим зависимости"
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq curl unzip ca-certificates python3 python3-venv >/dev/null
+  # На свежем сервере первые минуты пакеты держит автообновление системы
+  # (unattended-upgrades). Ждём его, а не падаем: прерывать его нельзя.
+  waited=0
+  while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do
+    if [ "$waited" -eq 0 ]; then
+      echo "    система обновляется сама — ждём, пока закончит (обычно 2–10 минут)"
+    fi
+    if [ "$waited" -ge 1200 ]; then
+      echo "Менеджер пакетов занят больше 20 минут — запустите скрипт ещё раз позже" >&2
+      exit 1
+    fi
+    sleep 10
+    waited=$((waited + 10))
+  done
+  APT_WAIT="-o DPkg::Lock::Timeout=600"
+  apt-get $APT_WAIT update -qq
+  apt-get $APT_WAIT install -y -qq curl unzip ca-certificates python3 python3-venv >/dev/null
 elif command -v dnf >/dev/null 2>&1; then
   dnf install -y -q curl unzip ca-certificates python3 >/dev/null
 else
