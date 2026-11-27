@@ -351,6 +351,17 @@ async def create_node(
     session: AsyncSession = Depends(get_session),
     admin: Admin = Depends(web_admin),
 ):
+    same = (await session.execute(select(Node).where(Node.name == name.strip()))).scalars().first()
+    if same is not None:
+        # Форму отправили дважды (двойной клик, «назад» и снова «добавить») —
+        # сервер уже есть, второй не нужен.
+        if same.address == address.strip():
+            return _redirect()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Сервер «{same.name}» уже есть (адрес {same.address}). "
+            "Дайте новому другое название или измените существующий.",
+        )
     node = Node(
         name=name.strip(),
         address=address.strip(),
@@ -425,6 +436,14 @@ async def update_node(
     admin: Admin = Depends(web_admin),
 ):
     node = await _get_node(session, node_id)
+    taken = (await session.execute(
+        select(Node.id).where(Node.name == name.strip(), Node.id != node_id)
+    )).scalars().first()
+    if taken is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Название «{name.strip()}» уже занято другим сервером — выберите другое.",
+        )
     node.name = name.strip()
     node.address = address.strip()
     node.agent_host = agent_host.strip() or None

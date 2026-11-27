@@ -1618,3 +1618,17 @@ def test_random_neighbors_from_masking_page(client, inbound):
         assert "случайные соседи" in client.get("/logs").text
     finally:
         masking_web._LAST_NEIGHBORS.clear()
+
+
+def test_same_server_name_is_not_a_500(client, inbound):
+    """Живой случай: «France - Paris» добавили второй раз — была ошибка 500."""
+    data = {"name": "France - Paris", "address": "fr.example.com", "agent_host": "127.0.0.1",
+            "agent_port": 9, "agent_token": "fr-token", "country": "FR"}
+    assert client.post("/nodes/create", data=data, follow_redirects=False).status_code == 303
+    # Повторная отправка той же формы — просто назад к списку.
+    assert client.post("/nodes/create", data=data, follow_redirects=False).status_code == 303
+    other = dict(data, address="other.example.com")
+    clash = client.post("/nodes/create", data=other, follow_redirects=False)
+    assert clash.status_code == 409 and "уже есть" in clash.text
+    page = client.get("/nodes").text
+    assert page.count("France - Paris</div>") <= 1 or page.count(">France - Paris<") <= 1
