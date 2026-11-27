@@ -411,24 +411,23 @@ async def _pick_domain(client, node, nodes: Sequence[Any], avoid: Set[str]) -> O
     from app.services.node_client import NodeClient, NodeError
 
     taken = _taken_domains(nodes, node.id) | avoid | set(masking.DISCOURAGED)
-    candidates: List[str] = []
     agent = NodeClient(node)
     ip = await _public_ipv4(masking_address(node))
+    neighbors: List[Dict[str, Any]] = []
+    probed: List[Dict[str, Any]] = []
     if ip:
         try:
-            found = await agent.neighbors(ip)
-            for item in sorted(masking.usable_neighbors(found.get("results", [])),
-                               key=lambda r: (r.get("ms") or 10**6, r["domain"])):
-                candidates.append(item["domain"])
+            neighbors = (await agent.neighbors(ip)).get("results", [])
         except NodeError as exc:
             logger.info(f"Зонд: соседи {node.name} не найдены: {exc}")
     try:
-        probed = await agent.probe_domains(list(masking.RECOMMENDED))
-        for item in sorted((r for r in probed.get("results", []) if r.get("ok")),
-                           key=lambda r: (r.get("ms") or 10**6, r["domain"])):
-            candidates.append(item["domain"])
+        probed = (await agent.probe_domains(list(masking.RECOMMENDED))).get("results", [])
     except NodeError as exc:
         logger.info(f"Зонд: домены с {node.name} не проверены: {exc}")
+    # Тот же порядок, что у кнопки «Подобрать лучший домен»: соседи из своей
+    # /24, остальные соседи, нишевые домены своей страны, остальной каталог.
+    candidates = [item["domain"] for item in masking.rank_for_node(
+        ip, getattr(node, "country", None), neighbors, probed, taken)]
     candidates = [d for d in dict.fromkeys(candidates) if d not in taken][:DOMAIN_CANDIDATES]
     if not candidates:
         return None

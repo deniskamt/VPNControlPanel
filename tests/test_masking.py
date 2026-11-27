@@ -300,3 +300,40 @@ def test_russian_zones_are_dropped_for_foreign_servers():
     chosen = m.assign_distinct([1], {1: [{"domain": "x.ru", "ok": True, "ms": 1},
                                          {"domain": "y.example", "ok": True, "ms": 9}]})
     assert chosen == {1: "y.example"}
+
+
+def test_catalog_has_no_big_brands_in_recommended():
+    from app.services import masking as m
+
+    for brand in ("www.nokia.com", "www.siemens.com", "www.philips.com", "www.lenovo.com",
+                  "www.microsoft.com", "www.capcom.co.jp"):
+        assert brand not in m.RECOMMENDED and brand in m.DISCOURAGED
+    assert "www.thomann.de" in m.RECOMMENDED and not any(m.is_russian(d) for d in m.RECOMMENDED)
+
+
+def test_best_domain_ranking():
+    from app.services import masking as m
+
+    neighbors = [
+        {"domain": "far.example", "ok": True, "same_subnet": True, "ms": 2, "neighbor_ip": "95.216.9.5"},
+        {"domain": "near.example", "ok": True, "same_subnet": True, "ms": 9, "neighbor_ip": "95.216.10.7"},
+        {"domain": "shop.ru", "ok": True, "same_subnet": True, "ms": 1, "neighbor_ip": "95.216.10.8"},
+    ]
+    probed = [
+        {"domain": "www.thomann.de", "ok": True, "ms": 30},      # Германия
+        {"domain": "www.jimms.fi", "ok": True, "ms": 40},        # Финляндия — своя страна
+        {"domain": "www.nokia.com", "ok": True, "ms": 1},        # известная — нельзя
+        {"domain": "www.motonet.fi", "ok": False, "ms": 5},      # не годится с сервера
+    ]
+    ranked = m.rank_for_node("95.216.10.20", "FI", neighbors, probed, taken=["far.example"])
+    assert [r["domain"] for r in ranked] == ["near.example", "www.jimms.fi", "www.thomann.de"]
+    assert ranked[0]["source"] == "сосед" and ranked[1]["source"] == "каталог"
+
+    # Без соседей — каталог; два сервера не получат один домен; заблокированное
+    # из России пропускается.
+    a = m.rank_for_node("1.1.1.1", "DE", [], probed)
+    b = m.rank_for_node("2.2.2.2", "DE", [], probed)
+    chosen = m.assign_best({1: a, 2: b}, blocked=["www.jimms.fi"])
+    assert chosen[1]["domain"] != chosen[2]["domain"] if 2 in chosen else True
+    assert "www.jimms.fi" not in {c["domain"] for c in chosen.values()}
+    assert chosen[1]["domain"] == "www.thomann.de"

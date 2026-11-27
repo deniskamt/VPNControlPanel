@@ -1632,3 +1632,36 @@ def test_same_server_name_is_not_a_500(client, inbound):
     assert clash.status_code == 409 and "уже есть" in clash.text
     page = client.get("/nodes").text
     assert page.count("France - Paris</div>") <= 1 or page.count(">France - Paris<") <= 1
+
+
+def test_best_domain_button(client, inbound, monkeypatch):
+    """«Подобрать лучший домен»: сосед из своей /24 побеждает каталог."""
+    import re
+
+    from app.services.node_client import NodeClient
+    from app.web import masking as masking_web
+
+    async def fake_neighbors(self, ip):
+        return {"subnet": "x", "results": [{"domain": "best.neighbor.example", "ok": True,
+                                            "same_subnet": True, "ms": 3, "neighbor_ip": "127.0.0.9"}]}
+
+    async def fake_probe(self, domains):
+        return {"results": [{"domain": d, "ok": True, "ms": 50} for d in domains]}
+
+    async def fake_ip(address):
+        return "127.0.0.1"
+
+    monkeypatch.setattr(NodeClient, "neighbors", fake_neighbors)
+    monkeypatch.setattr(NodeClient, "probe_domains", fake_probe)
+    monkeypatch.setattr(masking_web, "_public_ipv4", fake_ip)
+    page = client.get("/nodes").text
+    ids = sorted({int(x) for x in re.findall(r'/nodes/(\d+)/config', page)})
+    plain = [i for i in ids if "VLESS-REALITY" in client.get(f"/nodes/{i}/config").text
+             and "UPSTREAM" not in client.get(f"/nodes/{i}/config").text]
+    node_id = plain[0]
+    assert "Подобрать лучший домен всем серверам" in client.get("/masking").text
+    done = client.post("/masking/best", data={"node_id": node_id}, follow_redirects=False)
+    assert done.status_code == 303, done.text
+    assert "best.neighbor.example" in client.get(f"/nodes/{node_id}/config").text
+    assert "best.neighbor.example" in client.get("/masking").text
+    masking_web._LAST_BEST.clear(); masking_web._LAST_NEIGHBORS.clear(); masking_web._LAST_PROBE.clear()

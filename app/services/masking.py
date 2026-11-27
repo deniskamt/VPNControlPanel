@@ -33,100 +33,112 @@ class Group:
 
 
 CATALOG: List[Group] = [
+    # Нишевые сайты: магазины электроники и музыки, профильные издания,
+    # локальные сервисы. В гайдах их нет, у корпораций с мировым CDN они не
+    # живут, а трафик к ним из любой страны выглядит обычным. Годится ли
+    # домен, всё равно решает проверка с самого сервера (TLS 1.3, HTTP/2,
+    # сертификат, задержка) — каталог только даёт кандидатов.
     Group(
-        "Япония и Азия — малоизвестные",
-        "Сайты студий и издательств: в гайдах их нет, а TLS 1.3 у многих "
-        "есть. Отсюда и www.lovelive-anime.jp, который у вас работает.",
+        "Япония — нишевые",
+        "Студии, издательства и магазины аниме и хобби: в гайдах их нет. "
+        "Отсюда и www.lovelive-anime.jp, который у вас работал.",
         [
             "www.lovelive-anime.jp",
             "www.aniplex.co.jp",
             "www.sunrise-inc.co.jp",
-            "www.kadokawa.co.jp",
-            "www.bandainamco.co.jp",
-            "www.square-enix.com",
-            "www.capcom.co.jp",
-            "www.konami.com",
-            "www.sega.co.jp",
-            "www.toho.co.jp",
-            "www.sanrio.co.jp",
             "www.goodsmile.info",
-            "www.yamaha.com",
-            "www.casio.com",
+            "www.animate.co.jp",
+            "www.toranoana.jp",
+            "www.melonbooks.co.jp",
+            "www.mandarake.co.jp",
+            "www.kotobukiya.co.jp",
+            "www.amiami.com",
         ],
+        countries=("JP", "KR", "TW", "HK", "SG", "MY"),
     ),
     Group(
-        "Северная Европа — для нод в Финляндии и Скандинавии",
-        "Промышленные компании: трафик к ним никого не удивляет, а сервера "
-        "рядом с финскими и шведскими дата-центрами.",
+        "Финляндия и Скандинавия — нишевые",
+        "Местные магазины и сервисы: рядом с финскими и шведскими "
+        "дата-центрами, за пределами региона почти неизвестны.",
         [
-            "www.kone.com",
-            "www.wartsila.com",
-            "www.fiskars.com",
-            "www.nokia.com",
-            "www.ericsson.com",
-            "www.electrolux.com",
-            "www.husqvarna.com",
-            "www.sandvik.com",
-            "www.scania.com",
-            "www.volvocars.com",
-            "www.abb.com",
+            "www.motonet.fi",
+            "www.tokmanni.fi",
+            "www.suomalainen.com",
+            "www.jimms.fi",
+            "www.proshop.fi",
+            "www.webhallen.com",
+            "www.inet.se",
+            "www.jula.se",
+            "www.biltema.se",
+            "www.komplett.no",
+            "www.proshop.dk",
         ],
         countries=("FI", "SE", "NO", "DK", "EE", "LV", "LT", "IS"),
     ),
     Group(
-        "Германия и Центральная Европа",
-        "Для нод в Германии, Польше, Чехии.",
+        "Германия и Центральная Европа — нишевые",
+        "Магазины техники и музыки, профильные издания — для нод в "
+        "Германии, Польше, Чехии, Австрии, Швейцарии.",
         [
-            "www.miele.com",
-            "www.zeiss.com",
-            "www.basf.com",
-            "www.continental.com",
-            "www.henkel.com",
-            "www.siemens.com",
-            "www.bosch.com",
-            "www.sap.com",
-            "www.otto.de",
-            "www.mediamarkt.de",
+            "www.thomann.de",
+            "www.reichelt.de",
+            "www.mindfactory.de",
+            "www.alternate.de",
+            "www.caseking.de",
+            "www.computerbase.de",
+            "www.golem.de",
+            "www.x-kom.pl",
+            "www.morele.net",
+            "www.czc.cz",
+            "www.digitec.ch",
         ],
         countries=("DE", "PL", "CZ", "AT", "CH", "SK", "HU"),
     ),
     Group(
-        "Нидерланды, Бельгия, Франция",
-        "Для нод в Амстердаме и рядом.",
+        "Нидерланды, Бельгия, Франция, Великобритания — нишевые",
+        "Местные магазины электроники и профильные сайты — для нод в "
+        "Амстердаме, Париже, Лондоне и рядом.",
         [
-            "www.asml.com",
-            "www.heineken.com",
-            "www.ing.com",
-            "www.philips.com",
-            "www.schneider-electric.com",
-            "www.decathlon.com",
-            "www.leroymerlin.fr",
+            "www.tweakers.net",
+            "www.megekko.nl",
+            "www.azerty.nl",
+            "www.alternate.nl",
+            "www.ldlc.com",
+            "www.materiel.net",
+            "www.topachat.com",
+            "www.scan.co.uk",
+            "www.overclockers.co.uk",
+            "www.ebuyer.com",
         ],
         countries=("NL", "BE", "FR", "LU", "GB", "IE", "ES", "PT", "IT"),
     ),
     Group(
-        "Электроника и софт — годятся почти где угодно",
-        "Крупные, но не «гайдовые»: CDN с узлами по всей Европе.",
+        "Известные компании — не рекомендуются",
+        "Крупные бренды: сочетание «SNI корпорации, а IP — дешёвый VPS» "
+        "вычисляется статистикой. Оставлены, чтобы старые подключения было "
+        "видно в списке; сами не подбираются.",
         [
-            "www.lg.com",
-            "www.panasonic.com",
-            "www.canon.com",
-            "www.nikon.com",
-            "www.logitech.com",
-            "www.asus.com",
-            "www.acer.com",
-            "www.lenovo.com",
-            "www.tp-link.com",
-            "www.autodesk.com",
-            "www.ubisoft.com",
-            "www.gog.com",
+            "www.square-enix.com", "www.capcom.co.jp", "www.konami.com", "www.sega.co.jp",
+            "www.kadokawa.co.jp", "www.bandainamco.co.jp", "www.toho.co.jp", "www.sanrio.co.jp",
+            "www.yamaha.com", "www.casio.com",
+            "www.kone.com", "www.wartsila.com", "www.fiskars.com", "www.nokia.com",
+            "www.ericsson.com", "www.electrolux.com", "www.husqvarna.com", "www.sandvik.com",
+            "www.scania.com", "www.volvocars.com", "www.abb.com",
+            "www.miele.com", "www.zeiss.com", "www.basf.com", "www.continental.com",
+            "www.henkel.com", "www.siemens.com", "www.bosch.com", "www.sap.com",
+            "www.otto.de", "www.mediamarkt.de",
+            "www.asml.com", "www.heineken.com", "www.ing.com", "www.philips.com",
+            "www.schneider-electric.com", "www.decathlon.com", "www.leroymerlin.fr",
+            "www.lg.com", "www.panasonic.com", "www.canon.com", "www.nikon.com",
+            "www.logitech.com", "www.asus.com", "www.acer.com", "www.lenovo.com",
+            "www.tp-link.com", "www.autodesk.com", "www.ubisoft.com", "www.gog.com",
         ],
+        recommended=False,
     ),
     Group(
         "Популярные — из гайдов, не рекомендуются",
         "Стоят в каждом втором конфиге и вычисляются в первую очередь. "
-        "www.cloudflare.com в России режется сам по себе. Оставлены, чтобы "
-        "старые подключения было видно в списке.",
+        "www.cloudflare.com в России режется сам по себе.",
         [
             "www.microsoft.com",
             "www.samsung.com",
@@ -399,4 +411,67 @@ def assign_random_neighbors(
         domain = rng.choice(pick_from)
         chosen[node_id] = domain
         used.add(domain)
+    return chosen
+
+
+# --- Лучший домен для сервера ----------------------------------------------------
+
+def _same_24(ip_a: str, ip_b: str) -> bool:
+    return bool(ip_a and ip_b) and ip_a.rsplit(".", 1)[0] == ip_b.rsplit(".", 1)[0]
+
+
+def rank_for_node(
+    node_ip: str,
+    country: Optional[str],
+    neighbors: Sequence[Dict],
+    probed: Sequence[Dict],
+    taken: Iterable[str] = (),
+) -> List[Dict]:
+    """Кандидаты в маскировку сервера — от лучшего к худшему.
+
+    1. Соседи по подсети (годные): сначала из той же /24, что и сервер, —
+       ближе всего к «обычному» трафику, — потом остальные; внутри — по
+       задержке.
+    2. Нишевые домены из каталога, годные по проверке с этого сервера:
+       сначала из группы его страны, потом остальные; внутри — по задержке.
+    Без занятых другими серверами, популярных, известных компаний и
+    российских зон.
+    """
+    used = set(taken)
+    near_country = {
+        domain for group in CATALOG if group.recommended
+        and (country or "").upper() in group.countries for domain in group.domains
+    }
+    ranked: List[Dict] = []
+    for item in sorted(
+        (i for i in usable_neighbors(neighbors) if i["domain"] not in used),
+        key=lambda i: (not _same_24(node_ip, i.get("neighbor_ip") or ""),
+                       i.get("ms") or 10**6, i["domain"]),
+    ):
+        ranked.append({"domain": item["domain"], "source": "сосед", "ms": item.get("ms")})
+    recommended = set(RECOMMENDED)
+    for item in sorted(
+        (i for i in probed if i.get("ok") and i["domain"] in recommended
+         and i["domain"] not in used and not is_russian(i["domain"])),
+        key=lambda i: (i["domain"] not in near_country, i.get("ms") or 10**6, i["domain"]),
+    ):
+        if all(r["domain"] != item["domain"] for r in ranked):
+            ranked.append({"domain": item["domain"], "source": "каталог", "ms": item.get("ms")})
+    return ranked
+
+
+def assign_best(
+    ranked_by_node: Dict[int, List[Dict]], blocked: Iterable[str] = ()
+) -> Dict[int, Dict]:
+    """Каждому серверу — лучший свободный кандидат, без повторов.
+    blocked — домены, которые не открываются из России (проверка зондом)."""
+    bad = set(blocked)
+    used: set = set()
+    chosen: Dict[int, Dict] = {}
+    for node_id in sorted(ranked_by_node, key=lambda nid: (len(ranked_by_node[nid]), nid)):
+        for item in ranked_by_node[node_id]:
+            if item["domain"] not in used and item["domain"] not in bad:
+                chosen[node_id] = item
+                used.add(item["domain"])
+                break
     return chosen

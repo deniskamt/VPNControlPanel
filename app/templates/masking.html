@@ -23,6 +23,58 @@
   сервера он свой: одинаковый домен на всех — одна примета на весь сервис.
 </div>
 
+<div class="panel" id="best">
+  <header>
+    Лучший домен для каждого сервера
+    <span class="muted" style="font-weight:400">одной кнопкой: соседи, если нет — нишевый из каталога</span>
+  </header>
+  <div class="body">
+    <p class="muted" style="margin-top:0">
+      Каждый сервер заново проверяет своих соседей по подсети и нишевые домены каталога.
+      Лучшим считается сосед из той же /24, что и сервер, потом остальные соседи по скорости;
+      если годных соседей нет — домен из каталога, сначала своей страны. Если в панели есть
+      проверка из России, кандидаты проверяются и оттуда. Домены не повторяются между
+      серверами; известные компании, популярные из гайдов и .ru/.su/.рф не берутся.
+      Мосты не трогаются. Займёт до 3–4 минут.
+    </p>
+    <form method="post" action="/masking/best" class="inline"
+          data-confirm="Подобрать и поставить лучший домен всем серверам? У людей новые домены появятся с обновлением подписки.">
+      <button type="submit" class="primary">Подобрать лучший домен всем серверам</button>
+    </form>
+  </div>
+  {% if best_rows %}
+  <div class="table-wrap">
+    <table class="mask-table">
+      <thead><tr><th>Сервер</th><th>Сейчас</th><th>Последний подбор</th><th></th></tr></thead>
+      <tbody>
+      {% for row in best_rows %}
+        <tr>
+          <td>{{ row.node.name | flags }}</td>
+          <td class="mono">{{ row.current or '—' }}
+            {% if row.current and row.current in discouraged %}<span class="badge warn">известный</span>{% endif %}
+          </td>
+          <td>
+            {% if row.last and row.last.domain %}
+              <span class="mono">{{ row.last.domain }}</span>
+              <span class="muted">· {{ row.last.source }}{% if row.last.ms %} · {{ row.last.ms }} мс{% endif %}</span>
+            {% elif row.last %}<span class="muted">{{ row.last.note }}</span>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+          <td style="text-align:right">
+            <form method="post" action="/masking/best" class="inline"
+                  data-confirm="Подобрать лучший домен для {{ row.node.name }}?">
+              <input type="hidden" name="node_id" value="{{ row.node.id }}">
+              <button class="small" type="submit">Подобрать</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
 <div class="panel" id="neighbors">
   <header>
     0. Соседи по подсети — лучший вариант

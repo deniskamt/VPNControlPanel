@@ -35,6 +35,8 @@ router = APIRouter(prefix="/masking")
 _LAST_PROBE: Dict[int, Dict[str, Any]] = {}
 # Последний поиск соседей: {номер сервера: {"at", "subnet", "results", "error"}}
 _LAST_NEIGHBORS: Dict[int, Dict[str, Any]] = {}
+# Последний подбор лучшего домена: {номер сервера: {"at", "domain", "source", "ms", "note"}}
+_LAST_BEST: Dict[int, Dict[str, Any]] = {}
 
 
 def _redirect(anchor: str = "") -> RedirectResponse:
@@ -139,6 +141,19 @@ async def masking_page(
                 if node.id in _LAST_NEIGHBORS
             ],
             "probe": _LAST_PROBE,
+            "best_rows": [
+                {
+                    "node": node,
+                    "current": next(
+                        (masking.domain_for(inbound.settings, node.id)
+                         for inbound in inbounds
+                         if any(item.id == node.id for item in inbound.nodes)),
+                        None,
+                    ),
+                    "last": _LAST_BEST.get(node.id),
+                }
+                for node in nodes if not node.bridge
+            ],
             "summary": masking.summarize(_results_by_node()),
             "node_names": {node.id: node.name for node in nodes},
             "now": time.time(),
@@ -294,6 +309,101 @@ async def random_neighbors(
     )
     trigger_sync()
     return _redirect("neighbors")
+
+
+async def _russian_blocked(domains: List[str], session: AsyncSession) -> set:
+    """Какие из доменов не открываются из России — если в панели есть зонд."""
+    from app.models.probe import Probe
+
+    probe = (await session.execute(
+        select(Probe).where(Probe.is_enabled.is_(True)).order_by(Probe.id)
+    )).scalars().first()
+    if probe is None or not domains:
+        return set()
+    try:
+        answer = await NodeClient(probe).probe_domains(domains)
+    except NodeError:
+        return set()
+    return {item["domain"] for item in answer.get("results", []) if not item.get("ok")}
+
+
+@router.post("/best")
+async def best_domains(
+    node_id: int = Form(default=0),
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Лучший маскировочный домен каждому серверу (или одному — node_id).
+
+    Свежая проверка с каждого сервера: соседи по подсети и нишевые домены
+    каталога. Лучшее — сосед из той же /24, потом соседи по задержке,
+    потом каталог (сначала своей страны). Если есть зонд — кандидаты ещё и
+    проверяются из России. Домены не повторяются между серверами."""
+    nodes = list(
+        (await session.execute(select(Node).where(Node.is_enabled.is_(True)))).scalars().all()
+    )
+    targets = [n for n in nodes if not n.bridge and (not node_id or n.id == node_id)]
+    if not targets:
+        raise HTTPException(409, "Нет серверов, которым подбирать домен")
+    reality = await _reality_inbounds(session)
+    target_ids = {n.id for n in targets}
+    taken = [
+        masking.domain_for(inbound.settings, n.id)
+        for inbound in reality for n in inbound.nodes
+        if n.id not in target_ids and masking.domain_for(inbound.settings, n.id)
+    ]
+
+    async def gather(node: Node):
+        ip = await _public_ipv4(node.address)
+        neighbors: List[Dict[str, Any]] = []
+        probed: List[Dict[str, Any]] = []
+        if ip:
+            try:
+                found = await NodeClient(node).neighbors(ip)
+                _LAST_NEIGHBORS[node.id] = {"at": time.time(), **found}
+                neighbors = found.get("results", [])
+            except NodeError as exc:
+                _LAST_NEIGHBORS[node.id] = {"at": time.time(), "results": [], "error": str(exc)}
+        try:
+            answer = await NodeClient(node).probe_domains(list(masking.RECOMMENDED))
+            probed = answer.get("results", [])
+            _LAST_PROBE[node.id] = {"at": time.time(), "results": probed}
+        except NodeError as exc:
+            _LAST_PROBE[node.id] = {"at": time.time(), "results": [], "error": str(exc)}
+        return node.id, masking.rank_for_node(ip, node.country, neighbors, probed, taken)
+
+    ranked = dict(await asyncio.gather(*(gather(node) for node in targets)))
+    # Из России проверяем только верх списков — этого хватает для выбора.
+    top = sorted({item["domain"] for items in ranked.values() for item in items[:6]})
+    blocked = await _russian_blocked(top, session)
+    chosen = masking.assign_best(ranked, blocked)
+
+    names = {n.id: n.name for n in targets}
+    for node in targets:
+        pick = chosen.get(node.id)
+        if pick is None:
+            _LAST_BEST[node.id] = {"at": time.time(), "domain": None,
+                                   "note": "годного свободного домена не нашлось — оставлен прежний"}
+            continue
+        _LAST_BEST[node.id] = {"at": time.time(), **pick}
+        for inbound in _node_reality(node, reality):
+            domains = masking.node_domains(inbound.settings)
+            domains[str(node.id)] = pick["domain"]
+            _save_node_domains(inbound, domains)
+    await log_action(
+        session,
+        action="inbound.node_domain",
+        actor=admin.username,
+        target=names[node_id] if node_id else "серверы",
+        target_type="node",
+        message="лучший домен: " + (", ".join(
+            f"{names[n]} → {d['domain']} ({d['source']})" for n, d in chosen.items()
+        ) or "не найден"),
+        commit=True,
+    )
+    if chosen:
+        trigger_sync()
+    return _redirect("best")
 
 
 @router.post("/probe")
