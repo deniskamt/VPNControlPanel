@@ -37,10 +37,15 @@
       серверами; известные компании, популярные из гайдов и .ru/.su/.рф не берутся.
       Мосты не трогаются. Займёт до 3–4 минут.
     </p>
+    {% if running.best %}
+      <div class="hint-box"><b>Идёт подбор…</b> Серверы ищут соседей и проверяют домены — 2–4 минуты.
+        Страница обновится сама.</div>
+    {% else %}
     <form method="post" action="/masking/best" class="inline"
-          data-confirm="Подобрать и поставить лучший домен всем серверам? У людей новые домены появятся с обновлением подписки.">
+          data-confirm="Подобрать и поставить лучший домен всем серверам? Займёт 2–4 минуты, идёт в фоне. У людей новые домены появятся с обновлением подписки.">
       <button type="submit" class="primary">Подобрать лучший домен всем серверам</button>
     </form>
+    {% endif %}
   </div>
   {% if best_rows %}
   <div class="table-wrap">
@@ -64,7 +69,7 @@
             <form method="post" action="/masking/best" class="inline"
                   data-confirm="Подобрать лучший домен для {{ row.node.name }}?">
               <input type="hidden" name="node_id" value="{{ row.node.id }}">
-              <button class="small" type="submit">Подобрать</button>
+              <button class="small" type="submit" {% if running.best %}disabled{% endif %}>Подобрать</button>
             </form>
           </td>
         </tr>
@@ -88,10 +93,14 @@
       на адрес) и найдёт сайты с TLS 1.3, HTTP/2 и настоящим сертификатом, которые и по DNS
       живут рядом. Нужен агент версии 6.
     </p>
+    {% if running.neighbors %}
+      <div class="hint-box"><b>Идёт поиск соседей…</b> До 3–4 минут. Страница обновится сама.</div>
+    {% else %}
     <form method="post" action="/masking/neighbors" class="inline">
       <button type="submit" class="primary">Найти соседей с серверов</button>
-      <span class="muted" style="margin-left:10px">до пары минут</span>
+      <span class="muted" style="margin-left:10px">до 3–4 минут, идёт в фоне</span>
     </form>
+    {% endif %}
     {% if neighbors %}
     <form method="post" action="/masking/neighbors/random" class="inline" style="margin-left:10px"
           data-confirm="Раздать каждому серверу случайного соседа из найденных? Домены не повторятся, у каждого сервера сменится маскировка всех подключений REALITY. Люди получат новые ссылки с обновлением подписки.">
@@ -308,4 +317,10 @@
     </div>
   {% endfor %}
 </div>
+{% if running %}
+<script>
+  // Работа идёт в фоне — обновлять страницу, пока не закончится.
+  setTimeout(function () { location.reload(); }, 15000);
+</script>
+{% endif %}
 {% endblock %}

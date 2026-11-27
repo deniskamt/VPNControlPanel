@@ -1356,6 +1356,7 @@ def test_neighbours_and_core_update_survive_unreachable_agents(client, inbound):
     """Ноды в тестах не отвечают — страница и журнал говорят об этом, без пятисоток."""
     found = client.post("/masking/neighbors", follow_redirects=False)
     assert found.status_code == 303
+    _wait_masking_background(client)
     page = client.get("/masking").text
     assert "Соседи по подсети" in page and "агент не отвечает" in page
 
@@ -1662,6 +1663,20 @@ def test_best_domain_button(client, inbound, monkeypatch):
     assert "Подобрать лучший домен всем серверам" in client.get("/masking").text
     done = client.post("/masking/best", data={"node_id": node_id}, follow_redirects=False)
     assert done.status_code == 303, done.text
+    _wait_masking_background(client)
     assert "best.neighbor.example" in client.get(f"/nodes/{node_id}/config").text
     assert "best.neighbor.example" in client.get("/masking").text
     masking_web._LAST_BEST.clear(); masking_web._LAST_NEIGHBORS.clear(); masking_web._LAST_PROBE.clear()
+
+
+def _wait_masking_background(client, timeout=20):
+    """Поиск соседей и подбор доменов идут в фоне — дождаться окончания."""
+    import time as _time
+
+    from app.web import masking as masking_web
+
+    deadline = _time.time() + timeout
+    while masking_web._RUNNING and _time.time() < deadline:
+        client.get("/login")  # даём циклу TestClient поработать
+        _time.sleep(0.05)
+    assert not masking_web._RUNNING
