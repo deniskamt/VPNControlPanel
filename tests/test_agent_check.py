@@ -179,3 +179,46 @@ def test_reach_tells_open_closed_and_requires_token(agent):
     states = [item["state"] for item in response.json()["results"]]
     assert states == ["open", "closed"]
     assert client.post("/reach", headers=AUTH, json={"targets": [{"host": "x"}]}).status_code == 400
+
+
+def test_neighbor_names_keep_wildcard_base(agent, monkeypatch):
+    module, _ = agent
+
+    class FakeTLS:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def settimeout(self, value):
+            pass
+
+        def selected_alpn_protocol(self):
+            return "h2"
+
+        def getpeercert(self):
+            return {}
+
+    class FakeContext:
+        check_hostname = True
+        minimum_version = None
+
+        def set_alpn_protocols(self, protos):
+            pass
+
+        def wrap_socket(self, raw, server_hostname=None):
+            return FakeTLS()
+
+    class Raw:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(module.socket, "create_connection", lambda *a, **k: Raw())
+    monkeypatch.setattr(module.ssl, "create_default_context", lambda: FakeContext())
+    monkeypatch.setattr(module, "_certificate_names",
+                        lambda cert: ["*.shop.example", "shop.example", "Www.Blog.Example"])
+    assert module._neighbor_names("10.0.0.1") == ["shop.example", "www.blog.example"]

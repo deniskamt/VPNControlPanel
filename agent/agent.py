@@ -44,7 +44,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 
 # Версия агента. Увеличивается при каждом изменении этого файла: панель
 # сравнивает её со своей и показывает, на каких нодах агент устарел.
-AGENT_VERSION = 9
+AGENT_VERSION = 10
 
 AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")
 AGENT_HOST = os.getenv("AGENT_HOST", "0.0.0.0")
@@ -930,8 +930,13 @@ def probe(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
 # Скан бережный: только порт 443 своей /24, одно соединение на адрес.
 
 NEIGHBOR_CONNECT_TIMEOUT = 1.5
-NEIGHBOR_WORKERS = 32
-NEIGHBOR_NAMES_LIMIT = 40
+NEIGHBOR_WORKERS = 64
+NEIGHBOR_NAMES_LIMIT = 120
+# Своя /24 — это 254 адреса, и соседей там бывает мало. У хостера обычно
+# несколько подсетей подряд — смотрим /22 (1022 адреса). Шире не надо:
+# дальше это уже не «соседи», и скан становится заметным.
+NEIGHBOR_DEFAULT_PREFIX = 22
+NEIGHBOR_MIN_PREFIX = 22
 
 
 def _neighbor_names(ip: str) -> List[str]:
@@ -954,7 +959,14 @@ def _neighbor_names(ip: str) -> List[str]:
             names = _certificate_names(tls.getpeercert())
     except (OSError, ssl.SSLError, ValueError):
         return []
-    return [name.lower() for name in names if not name.startswith("*.") and _HOSTNAME_RE.match(name.lower())]
+    result = []
+    for name in (item.lower() for item in names):
+        # «*.example.com» — сам example.com тоже может подойти: проверим.
+        if name.startswith("*."):
+            name = name[2:]
+        if _HOSTNAME_RE.match(name) and name not in result:
+            result.append(name)
+    return result
 
 
 @app.post("/neighbors", dependencies=[Depends(require_token)])
@@ -966,15 +978,31 @@ def neighbors(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         raise HTTPException(400, "нужен IPv4-адрес ноды") from None
     if not own.is_global:
         raise HTTPException(400, "адрес ноды не публичный — соседей искать негде")
-    subnet = ipaddress.IPv4Network(f"{own}/24", strict=False)
+    try:
+        prefix = int(payload.get("prefix") or NEIGHBOR_DEFAULT_PREFIX)
+    except (TypeError, ValueError):
+        prefix = NEIGHBOR_DEFAULT_PREFIX
+    prefix = min(max(prefix, NEIGHBOR_MIN_PREFIX), 24)
+    subnet = ipaddress.IPv4Network(f"{own}/{prefix}", strict=False)
     hosts = [str(ip) for ip in subnet.hosts() if ip != own]
 
     found: Dict[str, str] = {}
+    per_ip: List[List[str]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=NEIGHBOR_WORKERS) as pool:
         for ip, names in zip(hosts, pool.map(_neighbor_names, hosts)):
-            for name in names:
-                found.setdefault(name, ip)
-    names = list(found)[:NEIGHBOR_NAMES_LIMIT]
+            fresh = [name for name in names if name not in found]
+            for name in fresh:
+                found[name] = ip
+            if fresh:
+                per_ip.append(fresh)
+    # По кругу: сначала первое имя каждого соседа, потом вторые и так далее.
+    # Иначе один сосед с сертификатом на сотню имён съел бы весь лимит.
+    names: List[str] = []
+    depth = 0
+    while len(names) < NEIGHBOR_NAMES_LIMIT and any(len(item) > depth for item in per_ip):
+        names += [item[depth] for item in per_ip if len(item) > depth]
+        depth += 1
+    names = names[:NEIGHBOR_NAMES_LIMIT]
 
     def check(name: str) -> Dict[str, Any]:
         result = probe_domain(name)

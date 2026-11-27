@@ -197,12 +197,30 @@ def test_agent_finds_neighbours_only_in_its_own_subnet(monkeypatch):
     monkeypatch.setattr(agent.socket, "getaddrinfo",
                         lambda name, port, family=0: [(0, 0, 0, "", ("95.216.10.7", 443))])
 
+    # По умолчанию — /22: у хостера несколько подсетей подряд.
     answer = agent.neighbors({"ip": "95.216.10.20"})
-
-    assert answer["subnet"] == "95.216.10.0/24" and answer["scanned"] == 253
+    assert answer["subnet"] == "95.216.8.0/22" and answer["scanned"] == 1021
     assert "95.216.10.20" not in asked
     assert answer["results"][0]["domain"] == "shop.neighbour.fi"
     assert answer["results"][0]["same_subnet"] is True
+
+    # Можно уже, но не шире /22: дальше это не соседи, а скан чужих сетей.
+    assert agent.neighbors({"ip": "95.216.10.20", "prefix": 24})["subnet"] == "95.216.10.0/24"
+    assert agent.neighbors({"ip": "95.216.10.20", "prefix": 16})["subnet"] == "95.216.8.0/22"
+
+
+def test_one_big_certificate_does_not_eat_the_name_limit(monkeypatch):
+    agent = _agent()
+    agent.NEIGHBOR_NAMES_LIMIT = 5
+    big = [f"n{i}.cdn.example" for i in range(50)]
+    agent._neighbor_names = lambda ip: big if ip.endswith(".2") else (
+        [f"site{ip.split('.')[-1]}.example"] if ip.endswith((".3", ".4", ".5")) else [])
+    agent.probe_domain = lambda name: {"domain": name, "ok": True, "ms": 4}
+    monkeypatch.setattr(agent.socket, "getaddrinfo", lambda *a, **k: [])
+    answer = agent.neighbors({"ip": "95.216.10.20", "prefix": 24})
+    names = {item["domain"] for item in answer["results"]}
+    # Первые имена каждого соседа — раньше, чем хвост большого сертификата.
+    assert {"site3.example", "site4.example", "site5.example"} <= names
 
 
 def test_agent_refuses_to_scan_private_or_bad_addresses():
@@ -267,3 +285,18 @@ def test_current_domain_kept_only_when_nothing_else():
     chosen = m.assign_random_neighbors([1], {1: _found("only.example")},
                                        current={1: "only.example"})
     assert chosen == {1: "only.example"}
+
+
+def test_russian_zones_are_dropped_for_foreign_servers():
+    from app.services import masking as m
+
+    assert m.is_russian("despair.prokartina.ru") and m.is_russian("old.example.su")
+    assert m.is_russian("сайт.рф") and m.is_russian("xn--80aswg.xn--p1ai")
+    assert not m.is_russian("rutube.com") and not m.is_russian("www.ru-example.com")
+    found = _found("a.ru", "b.su", "good.example")
+    assert [i["domain"] for i in m.usable_neighbors(found)] == ["good.example"]
+    # Мосту в России российские сайты как раз нужны.
+    assert len(m.usable_neighbors(found, allow_russian=True)) == 3
+    chosen = m.assign_distinct([1], {1: [{"domain": "x.ru", "ok": True, "ms": 1},
+                                         {"domain": "y.example", "ok": True, "ms": 9}]})
+    assert chosen == {1: "y.example"}

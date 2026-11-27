@@ -271,6 +271,7 @@ def assign_distinct(
                 item
                 for item in results_by_node.get(node_id, [])
                 if item.get("ok") and item["domain"] not in DISCOURAGED
+                and not is_russian(item["domain"])
             ),
             key=lambda item: (item.get("ms") or 10**9, item["domain"]),
         )
@@ -326,11 +327,24 @@ def assign_from_catalog(
 
 # --- Соседи по подсети ------------------------------------------------------------
 
-def usable_neighbors(results: Sequence[Dict]) -> List[Dict]:
-    """Годные соседи: TLS 1.3, HTTP/2, сертификат и DNS в той же подсети."""
+# Российские зоны: иностранный сервер под SNI российского сайта — странная
+# пара, такую маскировку не берём. Мостам (сервер в России) — наоборот, нужны
+# именно они (services/bridge.py), поэтому там отсев выключается.
+RUSSIAN_ZONES = (".ru", ".su", ".xn--p1ai", ".рф")
+
+
+def is_russian(domain: str) -> bool:
+    name = (domain or "").lower().rstrip(".")
+    return name.endswith(RUSSIAN_ZONES)
+
+
+def usable_neighbors(results: Sequence[Dict], allow_russian: bool = False) -> List[Dict]:
+    """Годные соседи: TLS 1.3, HTTP/2, сертификат и DNS в той же подсети,
+    не популярные из гайдов и (для иностранных серверов) не .ru/.su/.рф."""
     return [
         item for item in results
         if item.get("ok") and item.get("same_subnet") and item["domain"] not in DISCOURAGED
+        and (allow_russian or not is_russian(item["domain"]))
     ]
 
 

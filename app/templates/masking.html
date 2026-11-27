@@ -196,6 +196,16 @@
         </div>
       {% endif %}
 
+      {% if plan.russian %}
+        <div class="warn-panel" style="margin-top:10px">
+          {% for node, domain in plan.russian %}
+            {{ node.name }} — <span class="mono">{{ domain }}</span>{% if not loop.last %}; {% endif %}
+          {% endfor %}.
+          Иностранный сервер под российским сайтом (.ru, .su, .рф) — заметная пара.
+          Смените домен: «Случайный» в блоке «Соседи по подсети» или любой из каталога.
+        </div>
+      {% endif %}
+
       {% if not plan.rows %}
         <p class="muted">Подключение не поднято ни на одном сервере.</p>
       {% else %}

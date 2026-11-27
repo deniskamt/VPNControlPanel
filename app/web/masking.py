@@ -100,6 +100,13 @@ async def masking_page(
                 "duplicates": masking.duplicates(
                     inbound.settings, [node.id for node in assigned]
                 ),
+                # Иностранный сервер под российским сайтом — такую пару лучше сменить.
+                "russian": [
+                    (node, masking.domain_for(inbound.settings, node.id))
+                    for node in assigned
+                    if not node.bridge
+                    and masking.is_russian(masking.domain_for(inbound.settings, node.id) or "")
+                ],
             }
         )
 
@@ -120,7 +127,9 @@ async def masking_page(
                 {
                     "node": node,
                     "found": _LAST_NEIGHBORS[node.id],
-                    "usable": masking.usable_neighbors(_LAST_NEIGHBORS[node.id].get("results", [])),
+                    "usable": masking.usable_neighbors(
+                        _LAST_NEIGHBORS[node.id].get("results", []), allow_russian=node.bridge
+                    ),
                     "reality": [
                         inbound for inbound in node.inbounds
                         if inbound.security == SecurityType.reality and inbound.is_enabled

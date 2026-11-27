@@ -153,9 +153,9 @@ class NodeClient:
         return await self._request(
             "POST",
             "/neighbors",
-            json={"ip": ip},
-            # Своя /24 на 443 и проверка найденных имён — до минуты-двух.
-            timeout=max(self.timeout, 150),
+            json={"ip": ip, "prefix": 22},
+            # /22 на 443 и проверка найденных имён — до трёх-четырёх минут.
+            timeout=max(self.timeout, 240),
             missing_hint=(
                 "агент на этой ноде старее версии 6 и не умеет искать соседей. "
                 "Обновите его кнопкой «Обновить агентов» в разделе «Серверы»"
