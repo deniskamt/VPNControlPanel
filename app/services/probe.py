@@ -332,7 +332,9 @@ async def heal(session: AsyncSession, probe: Probe, client: NodeClient, nodes, m
             f"домен у серверов {[n for n, _ in todo.rotate_domains]}"
         )
     try:
-        done, fresh = await probe_fix.apply(client, probe, nodes, todo)
+        done, fresh = await probe_fix.apply(
+            client, probe, nodes, todo, try_domain=domain_tester(session, client)
+        )
     except Exception as exc:  # noqa: BLE001 — самолечение не должно ронять проверку
         logger.exception(f"Зонд {probe.name}: самолечение упало: {exc}")
         await session.rollback()
@@ -415,6 +417,82 @@ def _reachable(probe: Probe) -> None:
         fixes = dict(probe.fixes)
         fixes["misses"] = 0
         probe.fixes = fixes
+
+
+# После заливки конфига Xray на сервере перезапускается — пара секунд.
+APPLY_SETTLE = 4
+
+
+def domain_tester(session: AsyncSession, client: NodeClient):
+    """Проверка для перебора доменов: сохранить, залить конфиг на сервер и
+    подключиться через него из России. True — хоть одно подключение сервера
+    работает полностью (туннель и загрузка)."""
+    from app.services.node_manager import load_users, sync_node
+
+    users_cache: List[User] = []
+
+    async def works(node: Node) -> bool:
+        await session.commit()
+        if not users_cache:
+            users_cache.extend(await load_users(session))
+        await sync_node(session, node, users=users_cache, force=True)
+        await asyncio.sleep(APPLY_SETTLE)
+        identity = await probe_identity.load(session, create=True)
+        targets = build_targets([node], identity)
+        if not targets:
+            return False
+        answer = await client.check([
+            {key: target[key] for key in ("key", "outbound", "host", "port", "sni")}
+            for target in targets
+        ])
+        return any(classify(item) == "ok" for item in answer.get("results") or [])
+
+    return works
+
+
+def find_domain_in_background(probe_id: int, node_id: int) -> None:
+    """Кнопка «Подобрать рабочий домен»: перебор для одного сервера, сразу,
+    без лимитов автоматики. Идёт в фоне — до нескольких минут."""
+    from app.core.database import session_scope
+    from app.services.node_manager import load_nodes
+
+    async def go() -> None:
+        lock = _locks.setdefault(probe_id, asyncio.Lock())
+        async with lock:
+            healing.add(probe_id)
+            try:
+                async with session_scope() as session:
+                    probe = await session.get(Probe, probe_id)
+                    nodes = await load_nodes(session)
+                    node = next((n for n in nodes if n.id == node_id), None)
+                    if probe is None or node is None:
+                        return
+                    sni = next((
+                        masking.domain_for(inbound.settings, node.id)
+                        for inbound in node.inbounds
+                        if inbound.security == SecurityType.reality
+                        and masking.domain_for(inbound.settings, node.id)
+                    ), None)
+                    if not sni:
+                        return
+                    client = NodeClient(probe, timeout=PROBE_TIMEOUT)
+                    todo = probe_fix.Plan(rotate_domains=[(node.id, sni)])
+                    done, fresh = await probe_fix.apply(
+                        client, probe, nodes, todo, try_domain=domain_tester(session, client)
+                    )
+                    await session.commit()
+                    if done or fresh:
+                        notifier.notify_background(probe_fix.report(probe.name, done, fresh))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"Зонд {probe_id}: подбор домена для {node_id} упал: {exc}")
+            finally:
+                healing.discard(probe_id)
+        # Обновить таблицу свежей проверкой.
+        run_in_background(probe_id, delay=5)
+
+    task = asyncio.get_running_loop().create_task(go())
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)
 
 
 async def run_all(session: AsyncSession) -> None:

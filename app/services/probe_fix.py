@@ -406,6 +406,11 @@ def _taken_domains(nodes: Sequence[Any], except_node: int) -> Set[str]:
 
 
 async def _pick_domain(client, node, nodes: Sequence[Any], avoid: Set[str]) -> Optional[str]:
+    found = await _pick_domains(client, node, nodes, avoid)
+    return found[0] if found else None
+
+
+async def _pick_domains(client, node, nodes: Sequence[Any], avoid: Set[str]) -> List[str]:
     """Новый домен для сервера: годный от него самого (TLS 1.3, h2) и
     открывающийся из России. Сначала соседи по подсети, потом каталог."""
     from app.services.node_client import NodeClient, NodeError
@@ -430,17 +435,14 @@ async def _pick_domain(client, node, nodes: Sequence[Any], avoid: Set[str]) -> O
         ip, getattr(node, "country", None), neighbors, probed, taken)]
     candidates = [d for d in dict.fromkeys(candidates) if d not in taken][:DOMAIN_CANDIDATES]
     if not candidates:
-        return None
+        return []
     try:
         answer = await client.probe_domains(candidates)
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Зонд: домены из России не проверены: {exc}")
-        return None
+        return []
     opens = {item["domain"] for item in answer.get("results", []) if item.get("ok")}
-    for domain in candidates:
-        if domain in opens:
-            return domain
-    return None
+    return [domain for domain in candidates if domain in opens]
 
 
 def _set_node_domain(inbound, node_id: int, domain: str) -> None:
@@ -451,8 +453,15 @@ def _set_node_domain(inbound, node_id: int, domain: str) -> None:
     inbound.settings = settings  # новый словарь — иначе JSON-колонка не сохранится
 
 
-async def apply(client, probe, nodes: Sequence[Any], todo: Plan, now: Optional[datetime] = None) -> Tuple[List[str], List[str]]:
-    """Выполнить план. Возвращает (что сделано, о чём сообщить впервые)."""
+async def apply(
+    client, probe, nodes: Sequence[Any], todo: Plan, now: Optional[datetime] = None,
+    try_domain=None,
+) -> Tuple[List[str], List[str]]:
+    """Выполнить план. Возвращает (что сделано, о чём сообщить впервые).
+
+    try_domain(node) -> bool — проверка «работает ли сервер сейчас» (залить
+    конфиг и подключиться через него из России). Если она передана, домен
+    не меняется вслепую один раз, а перебирается, пока не найдётся рабочий."""
     now = now or datetime.utcnow()
     history: Dict[str, Any] = {key: (dict(value) if isinstance(value, dict) else value)
                                for key, value in (probe.fixes or {}).items()}
@@ -502,6 +511,17 @@ async def apply(client, probe, nodes: Sequence[Any], todo: Plan, now: Optional[d
         node = by_id[node_id]
         state = dict(history["nodes"].get(str(node_id)) or {})
         bad = list(dict.fromkeys((state.get("bad_domains") or []) + [sni]))[-50:]
+        if try_domain is not None:
+            text = await _search_domain(client, node, nodes, sni, bad, try_domain, todo)
+            state["bad_domains"] = bad[-50:]
+            state["domain_changes"] = [
+                at for at in state.get("domain_changes", [])
+                if now - datetime.fromisoformat(at) < timedelta(days=1)
+            ] + [now.isoformat()]
+            history["nodes"][str(node_id)] = state
+            if text:
+                done.append(text)
+            continue
         domain = await _pick_domain(client, node, nodes, set(bad))
         state["bad_domains"] = bad
         if domain is None:
@@ -536,6 +556,58 @@ async def apply(client, probe, nodes: Sequence[Any], todo: Plan, now: Optional[d
     history["open"] = list(todo.notes.values())
     probe.fixes = history
     return done, fresh
+
+
+MAX_DOMAIN_TRIES = 8
+
+
+async def _search_domain(client, node, nodes, sni: str, bad: List[str], try_domain, todo: Plan) -> Optional[str]:
+    """Перебирать домены, пока сервер не заработает из России.
+
+    Каждый кандидат ставится серверу по-настоящему, конфиг заливается, и
+    зонд подключается через сервер: туннель и загрузка. Заработало — домен
+    остаётся. Ни один не помог — возвращаем прежний (людям лишняя смена ни к
+    чему) и сообщаем: похоже, режут сам IP."""
+    inbounds = [
+        inbound for inbound in node.inbounds
+        if inbound.security == SecurityType.reality and masking.domain_for(inbound.settings, node.id) == sni
+    ]
+    if not inbounds:
+        return None
+    candidates = (await _pick_domains(client, node, nodes, set(bad)))[:MAX_DOMAIN_TRIES]
+    if not candidates:
+        todo.notes[f"domain-none:{node.id}"] = (
+            f"{node.name}: домен {sni} режут, а замены, которая открывается из России, "
+            "не нашлось — подберите домен на странице «Маскировка»"
+        )
+        return None
+    tried: List[str] = []
+    for domain in candidates:
+        for inbound in inbounds:
+            _set_node_domain(inbound, node.id, domain)
+        tried.append(domain)
+        logger.info(f"Зонд: {node.name} — пробую домен {domain} ({len(tried)}/{len(candidates)})")
+        try:
+            works = await try_domain(node)
+        except Exception as exc:  # noqa: BLE001 — сбой проверки = домен не подтвердился
+            logger.warning(f"Зонд: проверка {node.name} с {domain} не удалась: {exc}")
+            works = False
+        if works:
+            todo.config_changed = True
+            return (f"{node.name}: подобран рабочий домен {domain} вместо {sni} "
+                    f"(попыток: {len(tried)}) — проверено подключением из России")
+        bad.append(domain)
+    for inbound in inbounds:
+        _set_node_domain(inbound, node.id, sni)
+    try:
+        await try_domain(node)  # вернуть серверу прежний конфиг
+    except Exception:  # noqa: BLE001
+        pass
+    todo.notes[f"domain-search:{node.id}"] = (
+        f"{node.name}: перебрал {len(tried)} доменов ({', '.join(tried)}) — ни с одним не "
+        "работает из России. Похоже, режут сам IP: нужен новый IP"
+    )
+    return None
 
 
 def report(probe_name: str, done: List[str], fresh: List[str]) -> str:

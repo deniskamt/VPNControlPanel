@@ -258,3 +258,21 @@ async def create_bridge(
     trigger_sync()
     await sync_node(session, node, users=await load_users(session), force=True)
     return _back()
+
+
+@router.post("/{probe_id}/find-domain/{node_id}")
+async def find_domain(
+    probe_id: int,
+    node_id: int,
+    session: AsyncSession = Depends(get_session),
+    admin: Admin = Depends(web_admin),
+):
+    """Перебирать домены для сервера, пока он не заработает из России."""
+    probe = await _get(session, probe_id)
+    node = await session.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сервер не найден")
+    await log_action(session, action="probe.find_domain", actor=admin.username,
+                     target=node.name, target_type="node", message="подбор рабочего домена", commit=True)
+    probe_service.find_domain_in_background(probe.id, node.id)
+    return _back()

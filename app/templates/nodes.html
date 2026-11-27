@@ -325,6 +325,7 @@ AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent
         </tr>
       </thead>
       <tbody>
+      {% set shown = namespace(ids=[]) %}
       {% for row in panel.rows %}
         <tr class="probe-{{ row.state }}">
           <td>
@@ -334,6 +335,13 @@ AGENT_TOKEN={{ probe.agent_token }} PANEL_URL={{ panel_url }} bash install_agent
             {% if row.state != 'ok' %}
             <div class="probe-reason">{{ row.reason }}</div>
             <div class="muted sub-line">{% if row.last_ok %}работало {{ row.last_ok | ago }}{% else %}ни разу не работало{% endif %}</div>
+            {% if row.security == 'reality' and row.node_id not in shown.ids and probe.is_enabled %}
+            {% set shown.ids = shown.ids + [row.node_id] %}
+            <form class="inline" method="post" action="/probes/{{ probe.id }}/find-domain/{{ row.node_id }}"
+                  data-confirm="Перебирать домены для {{ row.node }}, пока он не заработает из России? Каждый вариант ставится на сервер и проверяется подключением — до нескольких минут, подключения на нём будут коротко прерываться.">
+              <button class="small" type="submit" {% if panel.running or panel.healing %}disabled{% endif %}>Подобрать рабочий домен</button>
+            </form>
+            {% endif %}
             {% endif %}
           </td>
           <td class="mono">{{ row.sni or '—' }}</td>

@@ -388,3 +388,59 @@ def test_server_where_nothing_works_is_hidden_even_if_handshake_passes():
     merged = results({1: (port_cut(), sni_cut()), 2: (ok(), ok()), 3: (ok(), ok()),
                       4: (ok(), ok())})
     assert probe_fix.plan(nodes, merged, tried, now=NOW).hide == []
+
+
+def _rotation_setup(monkeypatch, candidates):
+    async def pick(client, node_obj, nodes, avoid):
+        return [d for d in candidates if d not in avoid]
+
+    monkeypatch.setattr(probe_fix, "_pick_domains", pick)
+    vision = inbound(1, "VLESS-REALITY-VISION", 2053)
+    vision.settings = {"serverNames": ["x"], "nodeDomains": {"1": "bad.example"}}
+    xhttp = inbound(2, "VLESS-REALITY-XHTTP", 10443)
+    xhttp.settings = {"serverNames": ["x"], "nodeDomains": {"1": "bad.example"}}
+    n = node(1)
+    n.inbounds = [vision, xhttp]
+    return n, vision, xhttp
+
+
+def test_search_keeps_trying_until_tunnel_works(monkeypatch):
+    import asyncio
+
+    n, vision, xhttp = _rotation_setup(monkeypatch, ["c1.example", "c2.example", "c3.example", "c4.example"])
+    seen = []
+
+    async def works(node_obj):
+        domain = probe_fix.masking.domain_for(vision.settings, node_obj.id)
+        seen.append(domain)
+        return domain == "c3.example"
+
+    probe = SimpleNamespace(fixes={}, auto_hide=True)
+    todo = probe_fix.Plan(rotate_domains=[(1, "bad.example")])
+    done, _ = asyncio.run(probe_fix.apply(object(), probe, [n], todo, now=NOW, try_domain=works))
+    assert seen == ["c1.example", "c2.example", "c3.example"]       # дальше не пошёл
+    assert probe_fix.masking.domain_for(vision.settings, 1) == "c3.example"
+    assert probe_fix.masking.domain_for(xhttp.settings, 1) == "c3.example"
+    assert "подобран рабочий домен c3.example" in done[0] and "попыток: 3" in done[0]
+    bad = probe.fixes["nodes"]["1"]["bad_domains"]
+    assert {"bad.example", "c1.example", "c2.example"} <= set(bad) and "c3.example" not in bad
+
+
+def test_search_gives_up_and_restores_old_domain(monkeypatch):
+    import asyncio
+
+    n, vision, _ = _rotation_setup(monkeypatch, ["c1.example", "c2.example"])
+    calls = []
+
+    async def never(node_obj):
+        calls.append(probe_fix.masking.domain_for(vision.settings, node_obj.id))
+        return False
+
+    probe = SimpleNamespace(fixes={}, auto_hide=True)
+    todo = probe_fix.Plan(rotate_domains=[(1, "bad.example")])
+    done, fresh = asyncio.run(probe_fix.apply(object(), probe, [n], todo, now=NOW, try_domain=never))
+    assert done == [] and not todo.config_changed
+    # Перепробовал оба и вернул прежний (последний вызов — заливка прежнего конфига).
+    assert calls == ["c1.example", "c2.example", "bad.example"]
+    assert probe_fix.masking.domain_for(vision.settings, 1) == "bad.example"
+    assert any("нужен новый IP" in text for text in fresh)
